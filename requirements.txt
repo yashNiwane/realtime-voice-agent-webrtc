@@ -2,13 +2,14 @@
 aiortc>=1.9.0
 av>=12.0.0
 
-# Speech & Neural Models
+# Speech, Neural & Agent Frameworks
 qwen-asr
 silero-vad>=5.1.0
 edge-tts>=7.0.0
 kokoro>=0.8.4
 huggingface-hub>=0.20.0
 llama-cpp-python>=0.2.80
+pipecat-ai>=0.0.50
 
 # Utilities & Config
 pydantic-settings>=2.0.0

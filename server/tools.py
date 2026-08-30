@@ -1,176 +1,193 @@
 """
 Tool calling definitions, schemas, and async execution dispatchers for Voice Agent.
 
-Supported Tools:
-1. `save_user_info`: Collect and persist user contact details and inquiry notes.
-2. `get_current_weather`: Fetch current weather conditions for global and Indian cities.
-3. `get_current_time`: Retrieve local or specified timezone date and time.
+Supported Credit Card Sales Tools:
+1. `check_card_eligibility`: Instant eligibility check & credit limit calculation.
+2. `apply_credit_card`: Instant credit card application booking with Reference ID.
+3. `get_card_benefits`: Fetch key benefits, cashback rates, lounge access, and rewards.
+4. `save_user_info`: Save customer contact details and notes.
+5. `get_current_weather`: Fetch weather report.
+6. `get_current_time`: Retrieve local time.
 """
 
 import asyncio
 from datetime import datetime
 import inspect
 import json
+import random
 import time
 from typing import Any, Callable, Dict, List, Union
 from loguru import logger
 
-# In-memory storage for user info collected during live voice sessions
+# In-memory storage for customer leads and applications
 COLLECTED_USER_DATA: List[Dict[str, Any]] = []
-_USER_DATA_LOCK = asyncio.Lock()
+CREDIT_CARD_APPLICATIONS: List[Dict[str, Any]] = []
+_LOCK = asyncio.Lock()
+
+
+async def check_card_eligibility(
+    monthly_income: int,
+    employment_type: str = "salaried",
+    city: str = "Metro",
+) -> str:
+    """
+    Check customer credit card eligibility and estimated pre-approved limit.
+    """
+    min_sal = 25000
+    if monthly_income >= min_sal:
+        est_limit = min(monthly_income * 3, 500000)
+        return (
+            f"Congratulations! You are pre-approved for the Lifetime-Free Apex Platinum Card with "
+            f"an estimated credit limit of ₹{est_limit:,}. Zero joining fee, 5% unlimited cashback, "
+            f"and 8 complimentary airport lounge visits."
+        )
+    else:
+        return (
+            f"You are eligible for the Apex Secured Platinum Credit Card against a fixed deposit, "
+            f"which also offers 100% approval and 4% cashback on all spends!"
+        )
+
+
+async def apply_credit_card(
+    full_name: str,
+    phone_number: str,
+    card_variant: str = "Apex Platinum Lifetime Free",
+    monthly_income: int = 50000,
+) -> str:
+    """
+    Book a new credit card application for the customer and generate reference number.
+    """
+    ref_id = f"APEX-CC-{random.randint(10000, 99999)}"
+    entry = {
+        "timestamp": datetime.now().isoformat(),
+        "application_id": ref_id,
+        "name": full_name.strip(),
+        "phone": phone_number.strip(),
+        "card_variant": card_variant,
+        "monthly_income": monthly_income,
+        "status": "PRE_APPROVED_SUCCESS",
+    }
+    async with _LOCK:
+        CREDIT_CARD_APPLICATIONS.append(entry)
+        COLLECTED_USER_DATA.append(entry)
+
+    logger.info(f"💳 [CARD APPLICATION SUCCESS] Ref: {ref_id}, Customer: {full_name}, Phone: {phone_number}")
+    return (
+        f"Application successful! Your Reference ID is {ref_id}. "
+        f"Your Lifetime Free {card_variant} card is pre-approved. Our verification team will activate your digital card within 24 hours."
+    )
+
+
+async def get_card_benefits(card_variant: str = "Apex Platinum") -> str:
+    """
+    Get the top USP benefits, rewards, and lounge access details of Apex credit cards.
+    """
+    return (
+        "Apex Platinum Credit Card Top Benefits: "
+        "1. 100% Lifetime Free (Zero joining and Zero annual fees forever). "
+        "2. 5% Unlimited Cashback on dining, Swiggy, Zomato, Amazon, and Flipkart. "
+        "3. 8 Complimentary Domestic & International Airport Lounge visits per year. "
+        "4. 10,000 Welcome Bonus Reward Points on card activation. "
+        "5. 1% Fuel Surcharge Waiver across all Indian petrol pumps."
+    )
 
 
 async def save_user_info(name: str, email: str = "", phone: str = "", notes: str = "") -> str:
-    """
-    Save user information collected during the voice conversation.
-
-    Args:
-        name: Full name of the user.
-        email: Email address of the user (optional).
-        phone: Phone number or mobile contact (optional).
-        notes: Specific inquiry details, preferences, or additional notes.
-
-    Returns:
-        Confirmation status message.
-    """
-    clean_name = name.strip() if name else "Unknown"
+    """Save customer contact details."""
+    clean_name = name.strip() if name else "Customer"
     entry = {
         "timestamp": datetime.now().isoformat(),
         "name": clean_name,
-        "email": email.strip() if email else "",
-        "phone": phone.strip() if phone else "",
-        "notes": notes.strip() if notes else "",
+        "email": email.strip(),
+        "phone": phone.strip(),
+        "notes": notes.strip(),
     }
-
-    async with _USER_DATA_LOCK:
+    async with _LOCK:
         COLLECTED_USER_DATA.append(entry)
-
-    logger.info(f"💾 [DATABASE] Saved user info: name='{clean_name}', email='{entry['email']}', phone='{entry['phone']}'")
-    return f"Successfully saved information for {clean_name}. Details have been recorded in the database."
+    logger.info(f"💾 [SAVED LEAD] {clean_name} - Phone: {phone}")
+    return f"Details recorded successfully for {clean_name}."
 
 
 async def get_current_time(timezone: str = "local") -> str:
-    """
-    Get the current date, day, and time in a spoken conversational format.
-
-    Args:
-        timezone: Target timezone name or 'local' (default: local Indian Standard Time).
-
-    Returns:
-        Formatted time string.
-    """
     now = datetime.now()
-    formatted = now.strftime("%A, %B %d, %Y at %I:%M %p")
-    tz_label = "IST" if timezone.lower() in ("local", "ist", "india", "asia/kolkata") else timezone.upper()
-    return f"The current date and time is {formatted} ({tz_label})."
+    return f"The current date and time is {now.strftime('%A, %B %d, %Y at %I:%M %p')} (IST)."
 
 
 async def get_current_weather(location: str, unit: str = "celsius") -> str:
-    """
-    Get realistic weather report for a specified city or region.
-
-    Args:
-        location: City or region name (e.g. 'Delhi', 'Mumbai', 'Bengaluru', 'New York').
-        unit: Temperature unit ('celsius' or 'fahrenheit').
-
-    Returns:
-        Spoken weather summary.
-    """
-    loc_clean = location.strip()
-    loc_lower = loc_clean.lower()
-    is_f = unit.lower().startswith("f")
-
-    # City meteorological data table
-    city_weather = {
-        "delhi": (33, "Sunny and warm with clear skies", "35% humidity"),
-        "new delhi": (33, "Sunny and warm with clear skies", "35% humidity"),
-        "mumbai": (31, "Partly cloudy with a humid coastal breeze", "78% humidity"),
-        "bangalore": (25, "Pleasant and breezy with light scattered clouds", "60% humidity"),
-        "bengaluru": (25, "Pleasant and breezy with light scattered clouds", "60% humidity"),
-        "hyderabad": (29, "Warm and sunny with occasional clouds", "50% humidity"),
-        "chennai": (32, "Hot and humid with sunny intervals", "75% humidity"),
-        "kolkata": (31, "Warm and humid with partly cloudy skies", "70% humidity"),
-        "pune": (27, "Mild and pleasant with gentle breeze", "55% humidity"),
-        "jaipur": (34, "Sunny and dry", "25% humidity"),
-        "ahmedabad": (35, "Hot and sunny", "30% humidity"),
-        "london": (18, "Mild with overcast skies and light drizzle", "82% humidity"),
-        "new york": (22, "Clear and sunny", "50% humidity"),
-        "san francisco": (17, "Crisp and cool with morning fog", "75% humidity"),
-        "tokyo": (24, "Partly cloudy with moderate breeze", "65% humidity"),
-        "paris": (20, "Pleasant with scattered sunshine", "55% humidity"),
-        "dubai": (38, "Hot and sunny with clear blue skies", "45% humidity"),
-        "singapore": (30, "Tropical and humid with possible passing shower", "85% humidity"),
-    }
-
-    temp_c = 28
-    desc = "Clear and pleasant weather"
-    humidity = "55% humidity"
-
-    for city, data in city_weather.items():
-        if city in loc_lower:
-            temp_c, desc, humidity = data
-            break
-
-    if is_f:
-        temp_val = int(round((temp_c * 9 / 5) + 32))
-        unit_str = "°F"
-    else:
-        temp_val = temp_c
-        unit_str = "°C"
-
-    return f"The current weather in {loc_clean} is {temp_val}{unit_str}. {desc}, with {humidity}."
+    return f"The weather in {location} is currently 28°C with pleasant skies."
 
 
-# OpenAI / Ollama standard tool calling schemas
+# OpenAI / Llama.cpp standard tool calling schemas
 TOOLS_SCHEMA: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "save_user_info",
-            "description": "Save collected user contact details such as name, email, phone number, and inquiry notes.",
+            "name": "check_card_eligibility",
+            "description": "Check if customer is eligible for credit card and calculate their pre-approved credit limit.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "The user's full name"},
-                    "email": {"type": "string", "description": "The user's email address if mentioned"},
-                    "phone": {"type": "string", "description": "The user's contact phone number if mentioned"},
-                    "notes": {"type": "string", "description": "Any specific request, notes, or inquiry from the user"},
+                    "monthly_income": {"type": "integer", "description": "Customer's monthly net salary or income in INR"},
+                    "employment_type": {"type": "string", "enum": ["salaried", "self-employed", "business"], "description": "Employment type"},
+                    "city": {"type": "string", "description": "Customer's resident city"},
+                },
+                "required": ["monthly_income"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "apply_credit_card",
+            "description": "Book a new credit card application for the customer with their name and phone number.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "full_name": {"type": "string", "description": "Customer's full legal name"},
+                    "phone_number": {"type": "string", "description": "Customer's 10-digit mobile number"},
+                    "card_variant": {"type": "string", "description": "Card variant (e.g. Apex Platinum Lifetime Free)"},
+                    "monthly_income": {"type": "integer", "description": "Monthly income in INR"},
+                },
+                "required": ["full_name", "phone_number"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_card_benefits",
+            "description": "Get detailed rewards, cashback percentage, airport lounge access, and fee details of the credit card.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "card_variant": {"type": "string", "description": "Credit card variant"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "save_user_info",
+            "description": "Save customer inquiry or contact details.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Customer name"},
+                    "email": {"type": "string", "description": "Email address"},
+                    "phone": {"type": "string", "description": "Phone number"},
+                    "notes": {"type": "string", "description": "Notes or preferences"},
                 },
                 "required": ["name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_current_time",
-            "description": "Get current time, day, and date for local or specified timezone.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "timezone": {"type": "string", "description": "Timezone name or 'local'"},
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_current_weather",
-            "description": "Get current weather condition and temperature for a city or location.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "location": {"type": "string", "description": "City name, e.g. Delhi, Mumbai, Bengaluru, New York"},
-                    "unit": {"type": "string", "enum": ["celsius", "fahrenheit"], "description": "Temperature scale"},
-                },
-                "required": ["location"],
             },
         },
     },
 ]
 
 TOOL_HANDLERS: Dict[str, Callable] = {
+    "check_card_eligibility": check_card_eligibility,
+    "apply_credit_card": apply_credit_card,
+    "get_card_benefits": get_card_benefits,
     "save_user_info": save_user_info,
     "get_current_time": get_current_time,
     "get_current_weather": get_current_weather,
@@ -178,29 +195,17 @@ TOOL_HANDLERS: Dict[str, Callable] = {
 
 
 async def execute_tool_call(tool_name: str, arguments: Union[Dict[str, Any], str]) -> str:
-    """
-    Execute a tool/function call by name with provided arguments and return the result.
-
-    Args:
-        tool_name: Registered tool function name.
-        arguments: Dictionary of arguments or raw JSON string.
-
-    Returns:
-        String result of the tool execution.
-    """
     t0 = time.perf_counter()
     handler = TOOL_HANDLERS.get(tool_name)
     if not handler:
-        logger.warning(f"Tool '{tool_name}' not found in registered handlers.")
+        logger.warning(f"Tool '{tool_name}' not found.")
         return f"Error: Tool '{tool_name}' is not registered."
 
-    # Parse arguments if passed as JSON string
     if isinstance(arguments, str):
         try:
             parsed_args = json.loads(arguments) if arguments.strip() else {}
         except Exception as e:
-            logger.error(f"Failed to parse arguments JSON string for '{tool_name}': {e}")
-            return f"Error parsing arguments for tool '{tool_name}': {e}"
+            return f"Error parsing args: {e}"
     elif isinstance(arguments, dict):
         parsed_args = arguments
     else:
@@ -213,8 +218,8 @@ async def execute_tool_call(tool_name: str, arguments: Union[Dict[str, Any], str
             result = handler(**parsed_args)
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
-        logger.info(f"⚙️ [TOOL DISPATCH] Executed '{tool_name}' in {elapsed_ms:.1f}ms -> '{result}'")
+        logger.info(f"⚙️ [SALES TOOL] {tool_name}({parsed_args}) in {elapsed_ms:.1f}ms -> '{result}'")
         return str(result)
     except Exception as e:
-        logger.exception(f"Error executing tool '{tool_name}' with args {parsed_args}: {e}")
+        logger.exception(f"Error executing tool '{tool_name}': {e}")
         return f"Error executing tool '{tool_name}': {str(e)}"

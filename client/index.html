@@ -1519,7 +1519,21 @@
       const audioQueue = [];
       let isPlayingAudio = false;
 
-      function playBase64Audio(base64Str) {
+      function createAudioBufferFromPCM16(arrayBuffer, sampleRate = 48000) {
+        const int16Array = new Int16Array(arrayBuffer);
+        const float32Array = new Float32Array(int16Array.length);
+        for (let i = 0; i < int16Array.length; i++) {
+          float32Array[i] = int16Array[i] / 32768.0;
+        }
+        if (!audioCtx || audioCtx.state === 'closed') {
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        const buffer = audioCtx.createBuffer(1, float32Array.length, sampleRate);
+        buffer.copyToChannel(float32Array, 0);
+        return buffer;
+      }
+
+      function playBase64Audio(base64Str, sampleRate = 48000) {
         try {
           const binaryString = window.atob(base64Str);
           const len = binaryString.length;
@@ -1527,12 +1541,13 @@
           for (let i = 0; i < len; i++) {
             bytes[i] = binaryString.charCodeAt(i);
           }
-          audioQueue.push(bytes.buffer);
+          const audioBuffer = createAudioBufferFromPCM16(bytes.buffer, sampleRate);
+          audioQueue.push(audioBuffer);
           if (!isPlayingAudio) {
             playNextAudio();
           }
         } catch (e) {
-          console.error("Failed to decode base64 audio:", e);
+          console.error("Failed to parse base64 PCM audio:", e);
         }
       }
 
@@ -1542,7 +1557,7 @@
           return;
         }
         isPlayingAudio = true;
-        const arrayBuf = audioQueue.shift();
+        const audioBuffer = audioQueue.shift();
         try {
           if (!audioCtx || audioCtx.state === 'closed') {
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -1550,7 +1565,6 @@
           if (audioCtx.state === 'suspended') {
             await audioCtx.resume();
           }
-          const audioBuffer = await audioCtx.decodeAudioData(arrayBuf);
           const playSource = audioCtx.createBufferSource();
           playSource.buffer = audioBuffer;
           playSource.connect(audioCtx.destination);

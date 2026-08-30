@@ -116,14 +116,22 @@ class MultiEngineTTSManager:
     ) -> Tuple[bytes, np.ndarray, float, str]:
         """Synthesize ultra-fast neural audio with Kokoro-82M and resample to 48kHz PCM."""
         t0 = time.perf_counter()
-        lang_lower = language.lower().strip()
-        is_hindi = "hi" in lang_lower or "hindi" in lang_lower
-        lang_code = "h" if is_hindi else "a"
-        voice = self.cfg.kokoro_voice_hi if is_hindi else self.cfg.kokoro_voice_en
+        clean = text.strip()
+
+        # Detect script: count Devanagari vs Latin characters
+        num_devanagari = len(re.findall(r"[\u0900-\u097F]", clean))
+        num_latin = len(re.findall(r"[a-zA-Z]", clean))
+
+        if num_devanagari > num_latin:
+            lang_code = "h"
+            voice = self.cfg.kokoro_voice_hi
+        else:
+            lang_code = "a"
+            voice = self.cfg.kokoro_voice_en
 
         def _sync_kokoro():
             pipeline = self._get_kokoro_pipeline(lang_code)
-            generator = pipeline(text, voice=voice, speed=self.cfg.kokoro_speed, split_pattern=r"\n+")
+            generator = pipeline(clean, voice=voice, speed=self.cfg.kokoro_speed, split_pattern=r"\n+")
             audio_chunks = []
             for _, _, audio in generator:
                 if audio is not None and len(audio) > 0:
@@ -135,7 +143,7 @@ class MultiEngineTTSManager:
         loop = asyncio.get_running_loop()
         waveform = await loop.run_in_executor(None, _sync_kokoro)
         if len(waveform) == 0:
-            raise ValueError(f"Kokoro returned empty audio for text: '{text}'")
+            raise ValueError(f"Kokoro returned empty audio for text: '{clean}'")
 
         pcm_bytes, pcm_int16 = resample_to_48k_pcm16(waveform, 24000)
         latency_ms = (time.perf_counter() - t0) * 1000
@@ -187,14 +195,17 @@ class MultiEngineTTSManager:
         self, text: str, language: str
     ) -> Tuple[bytes, np.ndarray, float, str]:
         t0 = time.perf_counter()
-        lang_lower = language.lower().strip()
+        clean = text.strip()
 
-        if "hi" in lang_lower or "hindi" in lang_lower:
+        num_devanagari = len(re.findall(r"[\u0900-\u097F]", clean))
+        num_latin = len(re.findall(r"[a-zA-Z]", clean))
+
+        if num_devanagari > num_latin:
             voice = self.cfg.edge_voice_hi
         else:
             voice = self.cfg.edge_voice_en
 
-        communicate = edge_tts.Communicate(text, voice=voice)
+        communicate = edge_tts.Communicate(clean, voice=voice)
         audio_buffer = bytearray()
 
         async for chunk in communicate.stream():

@@ -1,0 +1,282 @@
+"""
+Multi-Engine Text-to-Speech (TTS) Manager.
+
+Supported Engines:
+1. VITS Hindi: Local offline neural TTS model (facebook/mms-tts-hin) with GPU/CPU acceleration.
+2. Edge-TTS: Free Microsoft Neural Cloud TTS (hi-IN-SwaraNeural / en-US-JennyNeural).
+3. Cartesia TTS: Ultra-low latency Sonic-3 cloud API with automatic fallback on quota exhaustion.
+
+All audio streams are converted and resampled to standardized 48,000 Hz 16-bit mono PCM
+for seamless, glitch-free WebRTC audio playback.
+"""
+
+import asyncio
+import io
+import os
+import time
+from typing import Optional, Tuple
+import edge_tts
+import httpx
+import numpy as np
+import scipy.signal
+import soundfile as sf
+import torch
+from loguru import logger
+from transformers import AutoTokenizer, VitsModel
+
+from server.config import config, TTSConfig
+
+
+def resample_to_48k_pcm16(
+    audio_data: np.ndarray, source_sr: int
+) -> Tuple[bytes, np.ndarray]:
+    """
+    Resample 1D float32 audio waveform to 48,000 Hz 16-bit signed PCM.
+
+    Args:
+        audio_data: 1D numpy array of audio samples.
+        source_sr: Original sample rate in Hz.
+
+    Returns:
+        Tuple of (pcm_bytes, int16_numpy_array).
+    """
+    if audio_data.ndim > 1:
+        audio_data = audio_data.flatten()
+
+    # Ensure float in range [-1.0, 1.0]
+    if audio_data.dtype == np.int16:
+        audio_float = audio_data.astype(np.float32) / 32768.0
+    elif audio_data.dtype != np.float32:
+        audio_float = audio_data.astype(np.float32)
+    else:
+        audio_float = audio_data
+
+    # Resample if sample rate differs from 48000 Hz
+    if source_sr != 48000:
+        if source_sr == 24000:
+            # 2x exact upsampling (e.g. Edge-TTS 24kHz)
+            resampled = scipy.signal.resample_poly(audio_float, up=2, down=1)
+        elif source_sr == 16000:
+            # 3x exact upsampling (e.g. VITS 16kHz)
+            resampled = scipy.signal.resample_poly(audio_float, up=3, down=1)
+        else:
+            num_target_samples = int(round(len(audio_float) * 48000 / source_sr))
+            resampled = np.interp(
+                np.linspace(0, len(audio_float), num_target_samples, endpoint=False),
+                np.arange(len(audio_float)),
+                audio_float,
+            )
+    else:
+        resampled = audio_float
+
+    # Clip and convert to 16-bit signed integer PCM
+    resampled_clipped = np.clip(resampled, -1.0, 1.0)
+    pcm_int16 = (resampled_clipped * 32767.0).astype(np.int16)
+    pcm_bytes = pcm_int16.tobytes()
+
+    return pcm_bytes, pcm_int16
+
+
+class MultiEngineTTSManager:
+    """
+    Unified manager orchestrating local VITS, Edge-TTS, and Cartesia Sonic-3 with automatic fallback.
+    """
+
+    def __init__(self, tts_config: Optional[TTSConfig] = None):
+        self.cfg = tts_config or config.tts
+        self.default_engine = self.cfg.default_engine
+        self.target_sample_rate = self.cfg.sample_rate  # 48000 Hz
+
+        # VITS Local Engine state
+        self._vits_model: Optional[VitsModel] = None
+        self._vits_tokenizer: Optional[AutoTokenizer] = None
+        self._vits_lock = asyncio.Lock()
+        self._vits_device = torch.device(
+            "cuda"
+            if self.cfg.vits_device.startswith("cuda") and torch.cuda.is_available()
+            else "cpu"
+        )
+
+        logger.info(
+            f"🔊 TTS Manager initialized (default_engine='{self.default_engine}', "
+            f"vits_device={self._vits_device}, output_sr={self.target_sample_rate}Hz)"
+        )
+
+    def _get_vits_engine(self) -> Tuple[VitsModel, AutoTokenizer]:
+        """Lazy load and warm up local VITS Hindi model."""
+        if self._vits_model is not None and self._vits_tokenizer is not None:
+            return self._vits_model, self._vits_tokenizer
+
+        model_id = self.cfg.vits_model_id
+        logger.info(f"Loading local VITS Hindi TTS model ({model_id}) onto {self._vits_device}...")
+        t0 = time.perf_counter()
+
+        tokenizer = AutoTokenizer.from_pretrained(model_id)
+        model = VitsModel.from_pretrained(model_id)
+        model = model.to(self._vits_device)
+        model.eval()
+
+        # Warmup inference
+        try:
+            inputs = tokenizer("नमस्ते", return_tensors="pt").to(self._vits_device)
+            with torch.no_grad():
+                _ = model(**inputs)
+        except Exception as e:
+            logger.debug(f"VITS warmup note: {e}")
+
+        self._vits_model = model
+        self._vits_tokenizer = tokenizer
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.info(f"✨ VITS Hindi model loaded and warmed in {elapsed_ms:.1f}ms")
+        return self._vits_model, self._vits_tokenizer
+
+    def _synthesize_vits_local(self, text: str) -> Tuple[bytes, np.ndarray, float]:
+        """Synthesize Hindi audio locally using VITS model and convert to 48kHz PCM."""
+        t0 = time.perf_counter()
+        model, tokenizer = self._get_vits_engine()
+
+        inputs = tokenizer(text, return_tensors="pt").to(self._vits_device)
+        with torch.no_grad():
+            outputs = model(**inputs)
+            waveform = outputs.waveform[0].cpu().numpy()
+
+        native_sr = getattr(model.config, "sampling_rate", 16000)
+        pcm_bytes, pcm_int16 = resample_to_48k_pcm16(waveform, native_sr)
+        latency_ms = (time.perf_counter() - t0) * 1000
+
+        return pcm_bytes, pcm_int16, latency_ms
+
+    async def _synthesize_edge_tts(
+        self, text: str, language: str
+    ) -> Tuple[bytes, np.ndarray, float, str]:
+        """Synthesize neural audio via Microsoft Edge-TTS and resample to 48kHz PCM."""
+        t0 = time.perf_counter()
+        lang_lower = language.lower().strip()
+
+        if "hi" in lang_lower or "hindi" in lang_lower:
+            voice = self.cfg.edge_voice_hi
+        else:
+            voice = self.cfg.edge_voice_en
+
+        communicate = edge_tts.Communicate(text, voice=voice)
+        audio_buffer = bytearray()
+
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_buffer.extend(chunk["data"])
+
+        if not audio_buffer:
+            raise ValueError(f"Edge-TTS returned empty audio stream for voice '{voice}'")
+
+        # Decode MP3 stream using soundfile
+        audio_data, source_sr = sf.read(io.BytesIO(audio_buffer))
+        pcm_bytes, pcm_int16 = resample_to_48k_pcm16(audio_data, source_sr)
+        latency_ms = (time.perf_counter() - t0) * 1000
+
+        return pcm_bytes, pcm_int16, latency_ms, f"Edge-TTS ({voice})"
+
+    async def _synthesize_cartesia(
+        self, text: str, language: str
+    ) -> Tuple[bytes, np.ndarray, float, str]:
+        """Synthesize ultra-low latency audio via Cartesia Sonic-3 API."""
+        t0 = time.perf_counter()
+        if not self.cfg.cartesia_api_key:
+            raise ValueError("Cartesia API key not configured")
+
+        headers = {
+            "X-API-Key": self.cfg.cartesia_api_key,
+            "Cartesia-Version": "2026-03-01",
+            "Content-Type": "application/json",
+        }
+        lang_lower = language.lower().strip()
+        cartesia_lang = "hi" if ("hi" in lang_lower or "hindi" in lang_lower) else "en"
+
+        payload = {
+            "model_id": self.cfg.cartesia_model,
+            "transcript": text,
+            "voice": {"mode": "id", "id": self.cfg.cartesia_voice_id},
+            "output_format": {
+                "container": "wav",
+                "sample_rate": 48000,
+                "encoding": "pcm_s16le",
+            },
+            "language": cartesia_lang,
+        }
+
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.post(
+                "https://api.cartesia.ai/tts/bytes",
+                headers=headers,
+                json=payload,
+            )
+            if resp.status_code == 200 and resp.content:
+                audio_data, source_sr = sf.read(io.BytesIO(resp.content))
+                pcm_bytes, pcm_int16 = resample_to_48k_pcm16(audio_data, source_sr)
+                latency_ms = (time.perf_counter() - t0) * 1000
+                return pcm_bytes, pcm_int16, latency_ms, "Cartesia (Sonic-3)"
+            elif resp.status_code == 402:
+                raise PermissionError("Cartesia quota exceeded (HTTP 402)")
+            else:
+                raise RuntimeError(f"Cartesia error HTTP {resp.status_code}: {resp.text}")
+
+    async def synthesize(
+        self,
+        text: str,
+        language: str = "Hindi",
+        preferred_engine: Optional[str] = None,
+    ) -> Tuple[bytes, np.ndarray, float, str]:
+        """
+        Synthesize text to 48kHz 16-bit PCM audio across configured engines with automatic fallback.
+
+        Args:
+            text: Text to be spoken.
+            language: Target language ('Hindi', 'English', etc.).
+            preferred_engine: Specific engine override ('vits', 'edge', 'cartesia', or 'auto').
+
+        Returns:
+            Tuple of (pcm_bytes, pcm_int16_array, latency_ms, engine_name).
+        """
+        clean_text = text.strip()
+        if not clean_text:
+            empty_arr = np.zeros(0, dtype=np.int16)
+            return b"", empty_arr, 0.0, "none"
+
+        engine = (preferred_engine or self.default_engine).lower().strip()
+        lang_lower = language.lower().strip()
+        is_hindi = "hi" in lang_lower or "hindi" in lang_lower
+
+        # 1. Attempt VITS Local Offline Engine
+        if engine in ("vits", "local_vits") or (engine == "auto" and is_hindi):
+            try:
+                loop = asyncio.get_running_loop()
+                async with self._vits_lock:
+                    pcm_bytes, pcm_int16, lat_ms = await loop.run_in_executor(
+                        None, self._synthesize_vits_local, clean_text
+                    )
+                logger.info(f"🔊 VITS Local Offline TTS generated in {lat_ms:.1f}ms")
+                return pcm_bytes, pcm_int16, lat_ms, "VITS Neural (Offline Local)"
+            except Exception as e:
+                logger.warning(f"VITS Local TTS failed: {e}. Falling back to Edge-TTS...")
+
+        # 2. Attempt Cartesia Sonic-3 Engine
+        if engine == "cartesia" or (engine == "auto" and not is_hindi):
+            try:
+                pcm_bytes, pcm_int16, lat_ms, engine_name = await self._synthesize_cartesia(
+                    clean_text, language
+                )
+                logger.info(f"🔊 Cartesia Sonic-3 TTS generated in {lat_ms:.1f}ms")
+                return pcm_bytes, pcm_int16, lat_ms, engine_name
+            except Exception as e:
+                logger.warning(f"Cartesia Sonic-3 failed: {e}. Falling back to Edge-TTS...")
+
+        # 3. Universal Fallback: Edge-TTS Neural
+        try:
+            pcm_bytes, pcm_int16, lat_ms, engine_name = await self._synthesize_edge_tts(
+                clean_text, language
+            )
+            logger.info(f"🔊 Edge-TTS generated ({engine_name}) in {lat_ms:.1f}ms")
+            return pcm_bytes, pcm_int16, lat_ms, engine_name
+        except Exception as e:
+            logger.error(f"All TTS synthesis engines failed: {e}")
+            empty_arr = np.zeros(0, dtype=np.int16)
+            return b"", empty_arr, 0.0, "error"

@@ -1,0 +1,1798 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cloud Agent v2 | Realtime WebRTC Voice Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-base: #070a12;
+      --bg-surface: rgba(15, 23, 42, 0.72);
+      --bg-surface-elevated: rgba(30, 41, 59, 0.75);
+      --border-subtle: rgba(255, 255, 255, 0.08);
+      --border-accent: rgba(99, 102, 241, 0.35);
+      
+      --primary: #6366f1;
+      --primary-hover: #4f46e5;
+      --primary-glow: rgba(99, 102, 241, 0.4);
+      --cyan: #06b6d4;
+      --cyan-glow: rgba(6, 182, 212, 0.35);
+      --emerald: #10b981;
+      --emerald-glow: rgba(16, 185, 129, 0.35);
+      --rose: #f43f5e;
+      --rose-glow: rgba(244, 63, 94, 0.35);
+      --amber: #f59e0b;
+      --purple: #a855f7;
+
+      --text-main: #f8fafc;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+
+      --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+
+      --radius-sm: 8px;
+      --radius-md: 14px;
+      --radius-lg: 20px;
+      --radius-full: 9999px;
+      --shadow-glass: 0 16px 36px 0 rgba(0, 0, 0, 0.45);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: radial-gradient(circle at 50% -10%, #1e1b4b 0%, #0c1222 45%, #050811 100%);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px 16px 40px;
+      overflow-x: hidden;
+    }
+
+    /* Container */
+    .app-container {
+      width: 100%;
+      max-width: 1180px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    /* Header */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 24px;
+      background: var(--bg-surface);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-glass);
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .brand-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, var(--primary), var(--cyan));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      box-shadow: 0 0 24px var(--primary-glow);
+      position: relative;
+    }
+
+    .brand-icon::after {
+      content: '';
+      position: absolute;
+      inset: -2px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--primary), var(--cyan));
+      z-index: -1;
+      opacity: 0.5;
+      filter: blur(6px);
+    }
+
+    .brand-text h1 {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      background: linear-gradient(90deg, #ffffff 0%, #cbd5e1 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .webrtc-badge {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: linear-gradient(90deg, rgba(99, 102, 241, 0.3), rgba(6, 182, 212, 0.3));
+      border: 1px solid var(--cyan);
+      color: var(--cyan);
+      letter-spacing: 0.5px;
+    }
+
+    .brand-text p {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    /* Endpoint Input */
+    .endpoint-box {
+      display: flex;
+      align-items: center;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-full);
+      padding: 4px 12px;
+      gap: 8px;
+    }
+
+    .endpoint-box label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      font-family: var(--font-mono);
+    }
+
+    .endpoint-box input {
+      background: transparent;
+      border: none;
+      color: var(--text-main);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      outline: none;
+      width: 200px;
+    }
+
+    /* Status Badges */
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border-radius: var(--radius-full);
+      font-size: 13px;
+      font-weight: 600;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid var(--border-subtle);
+      transition: all 0.3s ease;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      transition: all 0.3s ease;
+    }
+
+    .status-badge.connecting .status-dot {
+      background: var(--amber);
+      box-shadow: 0 0 10px var(--amber);
+      animation: pulse 1.2s infinite;
+    }
+
+    .status-badge.connected .status-dot {
+      background: var(--emerald);
+      box-shadow: 0 0 12px var(--emerald);
+    }
+
+    .status-badge.active .status-dot {
+      background: var(--cyan);
+      box-shadow: 0 0 14px var(--cyan);
+      animation: pulse 1s infinite;
+    }
+
+    .status-badge.error .status-dot {
+      background: var(--rose);
+      box-shadow: 0 0 12px var(--rose);
+    }
+
+    /* Settings Button */
+    .btn-settings {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-main);
+      padding: 8px 14px;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      transition: all 0.2s ease;
+    }
+
+    .btn-settings:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: var(--border-accent);
+      box-shadow: 0 0 16px rgba(99, 102, 241, 0.2);
+    }
+
+    /* Control & Audio Visualizer Hero */
+    .hero-card {
+      background: var(--bg-surface);
+      backdrop-filter: blur(20px);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      box-shadow: var(--shadow-glass);
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .call-controls {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .btn-mic {
+      background: linear-gradient(135deg, var(--primary) 0%, #4338ca 100%);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius-full);
+      padding: 14px 28px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 4px 24px var(--primary-glow);
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+    }
+
+    .btn-mic:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 32px var(--primary-glow);
+      background: linear-gradient(135deg, #7c3aed 0%, var(--primary) 100%);
+    }
+
+    .btn-mic.active {
+      background: linear-gradient(135deg, var(--rose) 0%, #be123c 100%);
+      box-shadow: 0 4px 28px var(--rose-glow);
+      animation: micPulse 2s infinite;
+    }
+
+    .btn-mic:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .agent-state-pill {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: var(--radius-full);
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .agent-state-pill .indicator {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+
+    .agent-state-pill.speaking {
+      border-color: var(--cyan);
+      color: var(--cyan);
+    }
+    .agent-state-pill.speaking .indicator {
+      background: var(--cyan);
+      box-shadow: 0 0 8px var(--cyan);
+    }
+
+    .agent-state-pill.listening {
+      border-color: var(--emerald);
+      color: var(--emerald);
+    }
+    .agent-state-pill.listening .indicator {
+      background: var(--emerald);
+      box-shadow: 0 0 8px var(--emerald);
+    }
+
+    /* Visualizer Canvas */
+    .visualizer-container {
+      width: 100%;
+      height: 70px;
+      background: rgba(0, 0, 0, 0.4);
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-subtle);
+      overflow: hidden;
+      position: relative;
+    }
+
+    canvas#audioVisualizer {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* Telemetry Metrics Grid */
+    .telemetry-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+    }
+
+    .telemetry-card {
+      background: var(--bg-surface);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      transition: all 0.25s ease;
+      position: relative;
+    }
+
+    .telemetry-card:hover {
+      border-color: var(--border-accent);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .card-title {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .card-badge {
+      font-size: 11px;
+      font-family: var(--font-mono);
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-muted);
+    }
+
+    .metric-value-row {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+
+    .metric-value {
+      font-family: var(--font-mono);
+      font-size: 26px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .metric-unit {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+    }
+
+    /* VAD Meter Bar */
+    .vad-meter-track {
+      width: 100%;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: var(--radius-full);
+      overflow: hidden;
+      position: relative;
+    }
+
+    .vad-meter-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--cyan), var(--emerald));
+      border-radius: var(--radius-full);
+      transition: width 0.08s ease, background 0.2s ease;
+      box-shadow: 0 0 10px var(--cyan-glow);
+    }
+
+    .vad-meter-fill.speech-active {
+      background: linear-gradient(90deg, var(--emerald), #22c55e);
+      box-shadow: 0 0 12px var(--emerald-glow);
+    }
+
+    .vad-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+    }
+
+    .vad-status-text {
+      font-weight: 600;
+    }
+    .vad-status-text.voice { color: var(--emerald); }
+    .vad-status-text.noise { color: var(--text-muted); }
+
+    /* Transcript Box */
+    .transcript-card {
+      background: var(--bg-surface);
+      backdrop-filter: blur(20px);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-glass);
+      display: flex;
+      flex-direction: column;
+      height: 480px;
+      overflow: hidden;
+    }
+
+    .transcript-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(15, 23, 42, 0.4);
+    }
+
+    .transcript-title {
+      font-size: 14px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .transcript-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-clear {
+      background: transparent;
+      border: 1px solid var(--border-subtle);
+      color: var(--text-muted);
+      font-size: 11px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-clear:hover {
+      color: var(--text-main);
+      border-color: var(--text-secondary);
+    }
+
+    .transcript-body {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      scroll-behavior: smooth;
+    }
+
+    .transcript-body::-webkit-scrollbar {
+      width: 6px;
+    }
+    .transcript-body::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 4px;
+    }
+
+    /* Message Bubbles */
+    .message-row {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-width: 85%;
+      animation: fadeIn 0.3s ease;
+    }
+
+    .message-row.user {
+      align-self: flex-end;
+      align-items: flex-end;
+    }
+
+    .message-row.assistant {
+      align-self: flex-start;
+      align-items: flex-start;
+    }
+
+    .message-meta {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--font-mono);
+    }
+
+    .message-bubble {
+      padding: 12px 18px;
+      border-radius: 18px;
+      font-size: 14px;
+      line-height: 1.6;
+      position: relative;
+    }
+
+    .message-row.user .message-bubble {
+      background: linear-gradient(135deg, rgba(6, 182, 212, 0.2) 0%, rgba(99, 102, 241, 0.25) 100%);
+      border: 1px solid rgba(6, 182, 212, 0.3);
+      color: #f0fdf4;
+      border-bottom-right-radius: 4px;
+    }
+
+    .message-row.assistant .message-bubble {
+      background: var(--bg-surface-elevated);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: var(--text-main);
+      border-bottom-left-radius: 4px;
+    }
+
+    .typing-cursor {
+      display: inline-block;
+      width: 6px;
+      height: 14px;
+      background: var(--cyan);
+      margin-left: 4px;
+      vertical-align: middle;
+      animation: blink 0.9s infinite;
+    }
+
+    /* Tool Call Badges */
+    .tool-badge-card {
+      align-self: flex-start;
+      background: rgba(168, 85, 247, 0.12);
+      border: 1px solid rgba(168, 85, 247, 0.35);
+      border-radius: var(--radius-md);
+      padding: 10px 14px;
+      margin: 4px 0;
+      max-width: 90%;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      animation: fadeIn 0.3s ease;
+    }
+
+    .tool-badge-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      color: #d8b4fe;
+      margin-bottom: 4px;
+    }
+
+    .tool-badge-payload {
+      color: #cbd5e1;
+      font-size: 11px;
+      background: rgba(0, 0, 0, 0.3);
+      padding: 6px 10px;
+      border-radius: 6px;
+      margin-top: 4px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+    }
+
+    .tool-badge-result {
+      margin-top: 6px;
+      color: #4ade80;
+      font-size: 11px;
+    }
+
+    /* Empty state */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-muted);
+      gap: 12px;
+      text-align: center;
+    }
+
+    .empty-state .icon {
+      font-size: 36px;
+      opacity: 0.6;
+    }
+
+    /* Engine Settings Drawer */
+    .drawer-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      backdrop-filter: blur(8px);
+      z-index: 100;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+
+    .drawer-overlay.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .settings-drawer {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 100%;
+      max-width: 420px;
+      background: rgba(15, 23, 42, 0.95);
+      backdrop-filter: blur(24px);
+      border-left: 1px solid var(--border-subtle);
+      box-shadow: -10px 0 40px rgba(0, 0, 0, 0.6);
+      z-index: 101;
+      transform: translateX(100%);
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .settings-drawer.open {
+      transform: translateX(0);
+    }
+
+    .drawer-header {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .drawer-title {
+      font-size: 18px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-close-drawer {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 20px;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 6px;
+      transition: color 0.2s;
+    }
+
+    .btn-close-drawer:hover {
+      color: var(--text-main);
+    }
+
+    .drawer-content {
+      flex: 1;
+      padding: 24px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .setting-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .setting-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-main);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .setting-description {
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    .custom-select, .custom-input {
+      background: rgba(30, 41, 59, 0.7);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-main);
+      padding: 10px 14px;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      font-family: var(--font-sans);
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .custom-select:focus, .custom-input:focus {
+      border-color: var(--primary);
+    }
+
+    .custom-select option {
+      background: #0f172a;
+      color: #fff;
+    }
+
+    /* Engine Radio Cards */
+    .engine-options {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .engine-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      border-radius: var(--radius-sm);
+      background: rgba(30, 41, 59, 0.5);
+      border: 1px solid var(--border-subtle);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .engine-card:hover {
+      background: rgba(30, 41, 59, 0.9);
+      border-color: var(--border-accent);
+    }
+
+    .engine-card input[type="radio"] {
+      accent-color: var(--primary);
+    }
+
+    .engine-card.selected {
+      border-color: var(--primary);
+      background: rgba(99, 102, 241, 0.15);
+    }
+
+    .engine-info h4 {
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .engine-info p {
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+
+    /* Audio Toggle Checkboxes */
+    .toggle-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+    }
+
+    .toggle-label {
+      font-size: 13px;
+      color: var(--text-main);
+    }
+
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 42px;
+      height: 22px;
+    }
+
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: rgba(255, 255, 255, 0.15);
+      transition: .3s;
+      border-radius: 22px;
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .3s;
+      border-radius: 50%;
+    }
+
+    input:checked + .slider {
+      background-color: var(--primary);
+    }
+
+    input:checked + .slider:before {
+      transform: translateX(20px);
+    }
+
+    .drawer-footer {
+      padding: 16px 24px;
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    .btn-apply {
+      width: 100%;
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      padding: 12px;
+      border-radius: var(--radius-sm);
+      font-weight: 700;
+      font-size: 14px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .btn-apply:hover {
+      background: var(--primary-hover);
+    }
+
+    /* Animations */
+    @keyframes pulse {
+      0% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(1.2); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+
+    @keyframes micPulse {
+      0% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.7); }
+      70% { box-shadow: 0 0 0 16px rgba(244, 63, 94, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0); }
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .app-container { gap: 14px; }
+      header { padding: 14px 18px; }
+      .endpoint-box input { width: 140px; }
+      .telemetry-grid { grid-template-columns: 1fr 1fr; }
+      .hero-card { padding: 18px; }
+      .transcript-card { height: 400px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    
+    <!-- Top Header -->
+    <header>
+      <div class="brand">
+        <div class="brand-icon">🎙️</div>
+        <div class="brand-text">
+          <h1>Cloud Agent v2 <span class="webrtc-badge">WebRTC</span></h1>
+          <p>Qwen3-ASR 0.6B • Gemma 4:31B • Cartesia & VITS Dual-TTS</p>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <!-- Endpoint Box -->
+        <div class="endpoint-box">
+          <label for="serverUrl">Endpoint</label>
+          <input type="text" id="serverUrl" value="/offer" placeholder="http://localhost:7860/offer" spellcheck="false">
+        </div>
+
+        <!-- WebRTC Status -->
+        <div class="status-badge" id="connBadge">
+          <div class="status-dot"></div>
+          <span id="connText">Disconnected</span>
+        </div>
+
+        <!-- Settings Button -->
+        <button class="btn-settings" id="btnOpenSettings" title="Engine & Audio Settings">
+          <span>⚙️</span> Settings
+        </button>
+      </div>
+    </header>
+
+    <!-- Hero Controls & Visualizer -->
+    <section class="hero-card">
+      <div class="hero-top">
+        <div class="call-controls">
+          <button class="btn-mic" id="btnCall">
+            <span id="btnCallIcon">🎙️</span>
+            <span id="btnCallLabel">Start Conversation</span>
+          </button>
+
+          <div class="agent-state-pill" id="agentStatePill">
+            <div class="indicator"></div>
+            <span id="agentStateText">IDLE</span>
+          </div>
+        </div>
+
+        <div style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);" id="latencySummary">
+          RTF: <span style="color: var(--cyan);" id="rtfText">--</span> | End-to-End: <span style="color: var(--emerald);" id="e2eText">-- ms</span>
+        </div>
+      </div>
+
+      <!-- Realtime Audio Visualizer -->
+      <div class="visualizer-container">
+        <canvas id="audioVisualizer"></canvas>
+      </div>
+    </section>
+
+    <!-- Telemetry Cards Grid -->
+    <section class="telemetry-grid">
+      
+      <!-- Card 1: VAD Activity -->
+      <div class="telemetry-card">
+        <div class="card-header">
+          <span class="card-title"><span>📊</span> Silero VAD Activity</span>
+          <span class="card-badge" id="vadBadge">NEURAL VAD</span>
+        </div>
+        <div class="metric-value-row">
+          <span class="metric-value" id="vadProbVal">0</span>
+          <span class="metric-unit">% Speech</span>
+        </div>
+        <div class="vad-meter-track">
+          <div class="vad-meter-fill" id="vadMeterFill"></div>
+        </div>
+        <div class="vad-labels">
+          <span class="vad-status-text noise" id="vadStatusText">SILENCE / NOISE</span>
+          <span id="vadRmsText">RMS: 0.0</span>
+        </div>
+      </div>
+
+      <!-- Card 2: Qwen3-ASR Latency -->
+      <div class="telemetry-card">
+        <div class="card-header">
+          <span class="card-title"><span>⚡</span> Qwen3-ASR Latency</span>
+          <span class="card-badge" id="asrLangBadge">Hindi</span>
+        </div>
+        <div class="metric-value-row">
+          <span class="metric-value" id="asrLatencyVal">--</span>
+          <span class="metric-unit">ms</span>
+        </div>
+        <div class="vad-labels">
+          <span>0.6B INT8 Dynamic</span>
+          <span id="asrChunkText">50ms chunks</span>
+        </div>
+      </div>
+
+      <!-- Card 3: Gemma 4 TTFT -->
+      <div class="telemetry-card">
+        <div class="card-header">
+          <span class="card-title"><span>🧠</span> Gemma 4 TTFT</span>
+          <span class="card-badge">gemma4:31b</span>
+        </div>
+        <div class="metric-value-row">
+          <span class="metric-value" id="llmTtftVal">--</span>
+          <span class="metric-unit">ms</span>
+        </div>
+        <div class="vad-labels">
+          <span>Time to First Token</span>
+          <span id="tokenCountText">0 tokens</span>
+        </div>
+      </div>
+
+      <!-- Card 4: TTS Synthesis Latency -->
+      <div class="telemetry-card">
+        <div class="card-header">
+          <span class="card-title"><span>🔊</span> TTS Latency</span>
+          <span class="card-badge" id="ttsEngineBadge">VITS Local</span>
+        </div>
+        <div class="metric-value-row">
+          <span class="metric-value" id="ttsLatencyVal">--</span>
+          <span class="metric-unit">ms</span>
+        </div>
+        <div class="vad-labels">
+          <span>Speech Synthesis</span>
+          <span id="ttsSrText">16kHz Audio</span>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Chat & Live Streaming Transcript Box -->
+    <section class="transcript-card">
+      <div class="transcript-header">
+        <div class="transcript-title">
+          <span>💬</span> Live Conversation & Tool Transcript
+        </div>
+        <div class="transcript-controls">
+          <button class="btn-clear" id="btnClearTranscript">Clear History</button>
+        </div>
+      </div>
+
+      <div class="transcript-body" id="transcriptBody">
+        <div class="empty-state" id="emptyState">
+          <div class="icon">✨</div>
+          <p>Click <strong>Start Conversation</strong> and speak into your microphone.</p>
+          <p style="font-size: 12px; color: var(--text-muted);">Supports Hindi (हिन्दी), English, Multilingual speech & Tool calls.</p>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Engine Settings Drawer -->
+  <div class="drawer-overlay" id="drawerOverlay"></div>
+  <aside class="settings-drawer" id="settingsDrawer">
+    <div class="drawer-header">
+      <div class="drawer-title">
+        <span>⚙️</span> Engine Settings
+      </div>
+      <button class="btn-close-drawer" id="btnCloseDrawer">&times;</button>
+    </div>
+
+    <div class="drawer-content">
+      <!-- Language Selection -->
+      <div class="setting-group">
+        <label class="setting-label" for="selectLanguage">ASR Recognition Language</label>
+        <div class="setting-description">Language model prompt optimization for Qwen3-ASR.</div>
+        <select class="custom-select" id="selectLanguage">
+          <option value="Hindi" selected>Hindi (हिन्दी)</option>
+          <option value="English">English (US/UK/IN)</option>
+          <option value="Spanish">Spanish (Español)</option>
+          <option value="French">French (Français)</option>
+          <option value="German">German (Deutsch)</option>
+          <option value="Japanese">Japanese (日本語)</option>
+          <option value="Chinese">Chinese (中文)</option>
+          <option value="Auto">Auto-Detect</option>
+        </select>
+      </div>
+
+      <!-- TTS Engine Selection -->
+      <div class="setting-group">
+        <label class="setting-label">Text-to-Speech Engine</label>
+        <div class="setting-description">Select primary voice synthesis provider.</div>
+        
+        <div class="engine-options">
+          <label class="engine-card selected" id="cardTtsVits">
+            <input type="radio" name="tts_engine" value="vits" checked>
+            <div class="engine-info">
+              <h4>🏠 VITS Local Neural</h4>
+              <p>Zero-latency offline synthesized speech</p>
+            </div>
+          </label>
+
+          <label class="engine-card" id="cardTtsCartesia">
+            <input type="radio" name="tts_engine" value="cartesia">
+            <div class="engine-info">
+              <h4>⚡ Cartesia Sonic-3</h4>
+              <p>Ultra-low latency streaming cloud voice</p>
+            </div>
+          </label>
+
+          <label class="engine-card" id="cardTtsEdge">
+            <input type="radio" name="tts_engine" value="edge">
+            <div class="engine-info">
+              <h4>🌐 Edge-TTS Neural</h4>
+              <p>High-quality multilingual cloud voices</p>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <!-- Audio Input Device -->
+      <div class="setting-group">
+        <label class="setting-label" for="selectAudioInput">Microphone Input Device</label>
+        <select class="custom-select" id="selectAudioInput">
+          <option value="default">Default System Microphone</option>
+        </select>
+      </div>
+
+      <!-- Audio Processing Toggles -->
+      <div class="setting-group">
+        <label class="setting-label">Audio Pre-Processing</label>
+        
+        <div class="toggle-row">
+          <span class="toggle-label">Acoustic Echo Cancellation (AEC)</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="chkAec" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="toggle-row">
+          <span class="toggle-label">Noise Suppression</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="chkNoiseSuppression" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="toggle-row">
+          <span class="toggle-label">Auto Gain Control (AGC)</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="chkAgc" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="drawer-footer">
+      <button class="btn-apply" id="btnApplySettings">Apply & Sync Settings</button>
+    </div>
+  </aside>
+
+  <!-- Inbound WebRTC Audio Playback Element (Zero Glitching) -->
+  <audio id="remoteAudio" autoplay playsinline></audio>
+
+  <script>
+    (function () {
+      'use strict';
+
+      // Elements
+      const serverUrlInput = document.getElementById('serverUrl');
+      const connBadge = document.getElementById('connBadge');
+      const connText = document.getElementById('connText');
+      const btnCall = document.getElementById('btnCall');
+      const btnCallIcon = document.getElementById('btnCallIcon');
+      const btnCallLabel = document.getElementById('btnCallLabel');
+      const agentStatePill = document.getElementById('agentStatePill');
+      const agentStateText = document.getElementById('agentStateText');
+      const remoteAudio = document.getElementById('remoteAudio');
+      const canvas = document.getElementById('audioVisualizer');
+      const canvasCtx = canvas.getContext('2d');
+
+      // Telemetry Elements
+      const vadProbVal = document.getElementById('vadProbVal');
+      const vadMeterFill = document.getElementById('vadMeterFill');
+      const vadStatusText = document.getElementById('vadStatusText');
+      const vadRmsText = document.getElementById('vadRmsText');
+      const asrLatencyVal = document.getElementById('asrLatencyVal');
+      const asrLangBadge = document.getElementById('asrLangBadge');
+      const llmTtftVal = document.getElementById('llmTtftVal');
+      const tokenCountText = document.getElementById('tokenCountText');
+      const ttsLatencyVal = document.getElementById('ttsLatencyVal');
+      const ttsEngineBadge = document.getElementById('ttsEngineBadge');
+      const rtfText = document.getElementById('rtfText');
+      const e2eText = document.getElementById('e2eText');
+
+      // Transcript Elements
+      const transcriptBody = document.getElementById('transcriptBody');
+      const emptyState = document.getElementById('emptyState');
+      const btnClearTranscript = document.getElementById('btnClearTranscript');
+
+      // Settings Drawer Elements
+      const btnOpenSettings = document.getElementById('btnOpenSettings');
+      const btnCloseDrawer = document.getElementById('btnCloseDrawer');
+      const drawerOverlay = document.getElementById('drawerOverlay');
+      const settingsDrawer = document.getElementById('settingsDrawer');
+      const selectLanguage = document.getElementById('selectLanguage');
+      const selectAudioInput = document.getElementById('selectAudioInput');
+      const chkAec = document.getElementById('chkAec');
+      const chkNoiseSuppression = document.getElementById('chkNoiseSuppression');
+      const chkAgc = document.getElementById('chkAgc');
+      const btnApplySettings = document.getElementById('btnApplySettings');
+
+      // WebRTC & Audio State
+      let peerConnection = null;
+      let dataChannel = null;
+      let localStream = null;
+      let audioCtx = null;
+      let analyser = null;
+      let animFrameId = null;
+      let isCalling = false;
+      let totalTokens = 0;
+      let activeAssistantBubble = null;
+      let activeAssistantCursor = null;
+
+      // Current Settings
+      let currentSettings = {
+        language: 'Hindi',
+        tts_engine: 'vits',
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        deviceId: 'default'
+      };
+
+      // Populate Audio Input Devices
+      async function populateDevices() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const audioInputs = devices.filter(d => d.kind === 'audioinput');
+          selectAudioInput.innerHTML = '<option value="default">Default System Microphone</option>';
+          audioInputs.forEach((dev, idx) => {
+            const opt = document.createElement('option');
+            opt.value = dev.deviceId;
+            opt.textContent = dev.label || `Microphone ${idx + 1}`;
+            selectAudioInput.appendChild(opt);
+          });
+        } catch (e) {
+          console.warn('Device enumeration failed:', e);
+        }
+      }
+
+      // Update Connection Status Badge
+      function setStatus(status, text) {
+        connBadge.className = 'status-badge ' + status;
+        connText.textContent = text;
+      }
+
+      function setAgentState(state, text) {
+        agentStatePill.className = 'agent-state-pill ' + state;
+        agentStateText.textContent = text;
+      }
+
+      // Settings Drawer Handlers
+      btnOpenSettings.onclick = () => {
+        populateDevices();
+        drawerOverlay.classList.add('open');
+        settingsDrawer.classList.add('open');
+      };
+
+      function closeDrawer() {
+        drawerOverlay.classList.remove('open');
+        settingsDrawer.classList.remove('open');
+      }
+      btnCloseDrawer.onclick = closeDrawer;
+      drawerOverlay.onclick = closeDrawer;
+
+      // TTS Engine Radio Card Selection
+      document.querySelectorAll('input[name="tts_engine"]').forEach(radio => {
+        radio.addEventListener('change', (e) => {
+          document.querySelectorAll('.engine-card').forEach(card => card.classList.remove('selected'));
+          e.target.closest('.engine-card').classList.add('selected');
+        });
+      });
+
+      // Apply & Sync Settings
+      btnApplySettings.onclick = () => {
+        const selectedTts = document.querySelector('input[name="tts_engine"]:checked')?.value || 'vits';
+        currentSettings.language = selectLanguage.value;
+        currentSettings.tts_engine = selectedTts;
+        currentSettings.echoCancellation = chkAec.checked;
+        currentSettings.noiseSuppression = chkNoiseSuppression.checked;
+        currentSettings.autoGainControl = chkAgc.checked;
+        currentSettings.deviceId = selectAudioInput.value;
+
+        asrLangBadge.textContent = currentSettings.language;
+        ttsEngineBadge.textContent = selectedTts.toUpperCase();
+
+        if (dataChannel && dataChannel.readyState === 'open') {
+          dataChannel.send(JSON.stringify({
+            type: 'config',
+            language: currentSettings.language,
+            tts_engine: currentSettings.tts_engine
+          }));
+        }
+        closeDrawer();
+      };
+
+      // Transcript Management
+      btnClearTranscript.onclick = () => {
+        transcriptBody.innerHTML = '';
+        transcriptBody.appendChild(emptyState);
+        emptyState.style.display = 'flex';
+      };
+
+      function appendUserMessage(text, latencyMs, lang) {
+        emptyState.style.display = 'none';
+        const row = document.createElement('div');
+        row.className = 'message-row user';
+
+        const meta = document.createElement('div');
+        meta.className = 'message-meta';
+        const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        meta.innerHTML = `<span>🗣️ You</span> • <span>${timeStr}</span> • <span style="color: var(--cyan);">${lang || currentSettings.language} [${latencyMs ? latencyMs.toFixed(1) + 'ms' : ''}]</span>`;
+
+        const bubble = document.createElement('div');
+        bubble.className = 'message-bubble';
+        bubble.textContent = text;
+
+        row.appendChild(meta);
+        row.appendChild(bubble);
+        transcriptBody.appendChild(row);
+        transcriptBody.scrollTop = transcriptBody.scrollHeight;
+      }
+
+      function startAssistantMessage() {
+        emptyState.style.display = 'none';
+        const row = document.createElement('div');
+        row.className = 'message-row assistant';
+
+        const meta = document.createElement('div');
+        meta.className = 'message-meta';
+        const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        meta.innerHTML = `<span>🤖 Assistant</span> • <span>${timeStr}</span> • <span id="curAssistMeta" style="color: var(--emerald);">Gemma 4</span>`;
+
+        const bubble = document.createElement('div');
+        bubble.className = 'message-bubble';
+
+        const cursor = document.createElement('span');
+        cursor.className = 'typing-cursor';
+        bubble.appendChild(cursor);
+
+        row.appendChild(meta);
+        row.appendChild(bubble);
+        transcriptBody.appendChild(row);
+        transcriptBody.scrollTop = transcriptBody.scrollHeight;
+
+        activeAssistantBubble = bubble;
+        activeAssistantCursor = cursor;
+      }
+
+      function streamAssistantToken(token) {
+        if (!activeAssistantBubble) {
+          startAssistantMessage();
+        }
+        if (activeAssistantCursor && activeAssistantCursor.parentNode === activeAssistantBubble) {
+          activeAssistantBubble.removeChild(activeAssistantCursor);
+        }
+        activeAssistantBubble.appendChild(document.createTextNode(token));
+        if (activeAssistantCursor) {
+          activeAssistantBubble.appendChild(activeAssistantCursor);
+        }
+        transcriptBody.scrollTop = transcriptBody.scrollHeight;
+      }
+
+      function finalizeAssistantMessage() {
+        if (activeAssistantCursor && activeAssistantCursor.parentNode) {
+          activeAssistantCursor.parentNode.removeChild(activeAssistantCursor);
+        }
+        activeAssistantBubble = null;
+        activeAssistantCursor = null;
+      }
+
+      function appendToolCallBadge(name, args, result) {
+        emptyState.style.display = 'none';
+        const card = document.createElement('div');
+        card.className = 'tool-badge-card';
+
+        const header = document.createElement('div');
+        header.className = 'tool-badge-header';
+        header.innerHTML = `<span>🔧</span> <strong>Function Call: ${name}</strong>`;
+
+        const payload = document.createElement('div');
+        payload.className = 'tool-badge-payload';
+        payload.textContent = `Args: ${JSON.stringify(args, null, 2)}`;
+
+        const resDiv = document.createElement('div');
+        resDiv.className = 'tool-badge-result';
+        resDiv.innerHTML = `<strong>Result:</strong> ${result || 'Success'}`;
+
+        card.appendChild(header);
+        card.appendChild(payload);
+        card.appendChild(resDiv);
+
+        transcriptBody.appendChild(card);
+        transcriptBody.scrollTop = transcriptBody.scrollHeight;
+      }
+
+      // Web Audio Visualizer Setup
+      function initVisualizer(stream) {
+        if (audioCtx) {
+          try { audioCtx.close(); } catch(e) {}
+        }
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 64;
+
+        const source = audioCtx.createMediaStreamSource(stream);
+        source.connect(analyser);
+
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+
+        function resizeCanvas() {
+          canvas.width = canvas.parentElement.clientWidth * window.devicePixelRatio;
+          canvas.height = canvas.parentElement.clientHeight * window.devicePixelRatio;
+          canvasCtx.scale(window.devicePixelRatio, window.devicePixelRatio);
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        function draw() {
+          animFrameId = requestAnimationFrame(draw);
+          analyser.getByteFrequencyData(dataArray);
+
+          const width = canvas.parentElement.clientWidth;
+          const height = canvas.parentElement.clientHeight;
+
+          canvasCtx.clearRect(0, 0, width, height);
+
+          const barWidth = (width / bufferLength) * 2.2;
+          let barHeight;
+          let x = 0;
+
+          for (let i = 0; i < bufferLength; i++) {
+            barHeight = (dataArray[i] / 255) * height * 0.85;
+
+            const gradient = canvasCtx.createLinearGradient(0, height, 0, 0);
+            gradient.addColorStop(0, '#6366f1');
+            gradient.addColorStop(0.5, '#06b6d4');
+            gradient.addColorStop(1, '#10b981');
+
+            canvasCtx.fillStyle = gradient;
+            canvasCtx.fillRect(x, height - barHeight, barWidth - 3, barHeight);
+
+            x += barWidth;
+          }
+        }
+        draw();
+      }
+
+      function stopVisualizer() {
+        if (animFrameId) {
+          cancelAnimationFrame(animFrameId);
+          animFrameId = null;
+        }
+        if (canvasCtx) {
+          canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+        if (audioCtx) {
+          try { audioCtx.close(); } catch(e) {}
+          audioCtx = null;
+        }
+      }
+
+      // WebRTC Offer / Answer Handlers
+      async function startCall() {
+        const rawUrl = serverUrlInput.value.trim() || '/offer';
+        const offerUrl = rawUrl.startsWith('http') ? rawUrl : (window.location.origin + (rawUrl.startsWith('/') ? rawUrl : '/' + rawUrl));
+
+        setStatus('connecting', 'Gathering Media...');
+        btnCall.disabled = true;
+
+        try {
+          // 1. Get User Media with AEC, Noise Suppression, and AGC
+          const audioConstraints = {
+            echoCancellation: currentSettings.echoCancellation,
+            noiseSuppression: currentSettings.noiseSuppression,
+            autoGainControl: currentSettings.autoGainControl,
+            sampleRate: 16000,
+            channelCount: 1
+          };
+
+          if (currentSettings.deviceId && currentSettings.deviceId !== 'default') {
+            audioConstraints.deviceId = { exact: currentSettings.deviceId };
+          }
+
+          localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false });
+          initVisualizer(localStream);
+
+          // 2. Initialize RTCPeerConnection
+          peerConnection = new RTCPeerConnection({
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+          });
+
+          // 3. Add local microphone audio track
+          localStream.getAudioTracks().forEach(track => {
+            peerConnection.addTrack(track, localStream);
+          });
+
+          // 4. Create DataChannel 'telemetry'
+          dataChannel = peerConnection.createDataChannel('telemetry');
+          setupDataChannel(dataChannel);
+
+          // 5. Inbound WebRTC Audio Playback
+          peerConnection.ontrack = (event) => {
+            console.log('Inbound WebRTC audio track received:', event.track);
+            if (event.streams && event.streams[0]) {
+              remoteAudio.srcObject = event.streams[0];
+            } else {
+              remoteAudio.srcObject = new MediaStream([event.track]);
+            }
+            remoteAudio.play().catch(err => console.warn('Autoplay prevented:', err));
+          };
+
+          // 6. Handle Connection States
+          peerConnection.onconnectionstatechange = () => {
+            console.log('PeerConnection state:', peerConnection.connectionState);
+            if (peerConnection.connectionState === 'connected') {
+              setStatus('connected', 'Connected');
+              setAgentState('listening', 'LISTENING');
+            } else if (peerConnection.connectionState === 'failed' || peerConnection.connectionState === 'closed') {
+              setStatus('error', 'Disconnected');
+              stopCall();
+            }
+          };
+
+          // 7. Non-trickle ICE Gathering
+          setStatus('connecting', 'Gathering ICE...');
+          const offer = await peerConnection.createOffer();
+          await peerConnection.setLocalDescription(offer);
+
+          await new Promise((resolve) => {
+            if (peerConnection.iceGatheringState === 'complete') {
+              resolve();
+            } else {
+              const checkState = () => {
+                if (peerConnection.iceGatheringState === 'complete') {
+                  peerConnection.removeEventListener('icegatheringstatechange', checkState);
+                  resolve();
+                }
+              };
+              peerConnection.addEventListener('icegatheringstatechange', checkState);
+              setTimeout(resolve, 2200); // 2.2s fallback timeout
+            }
+          });
+
+          // 8. POST Offer to Server
+          setStatus('connecting', 'Negotiating SDP...');
+          const response = await fetch(offerUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sdp: peerConnection.localDescription.sdp,
+              type: peerConnection.localDescription.type,
+              config: {
+                language: currentSettings.language,
+                tts_engine: currentSettings.tts_engine
+              }
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error(`Server returned ${response.status}: ${await response.text()}`);
+          }
+
+          const answerData = await response.json();
+          if (!answerData.sdp) {
+            throw new Error('Invalid SDP answer from server');
+          }
+
+          await peerConnection.setRemoteDescription(new RTCSessionDescription({
+            sdp: answerData.sdp,
+            type: answerData.type || 'answer'
+          }));
+
+          isCalling = true;
+          btnCall.className = 'btn-mic active';
+          btnCallIcon.textContent = '⏹️';
+          btnCallLabel.textContent = 'End Conversation';
+          btnCall.disabled = false;
+
+        } catch (err) {
+          console.error('Call failed:', err);
+          alert('WebRTC Connection failed: ' + err.message);
+          setStatus('error', 'Connection Failed');
+          stopCall();
+        }
+      }
+
+      function stopCall() {
+        isCalling = false;
+        finalizeAssistantMessage();
+
+        btnCall.className = 'btn-mic';
+        btnCallIcon.textContent = '🎙️';
+        btnCallLabel.textContent = 'Start Conversation';
+        btnCall.disabled = false;
+
+        stopVisualizer();
+
+        if (localStream) {
+          localStream.getTracks().forEach(t => t.stop());
+          localStream = null;
+        }
+
+        if (dataChannel) {
+          try { dataChannel.close(); } catch(e) {}
+          dataChannel = null;
+        }
+
+        if (peerConnection) {
+          try { peerConnection.close(); } catch(e) {}
+          peerConnection = null;
+        }
+
+        setStatus('', 'Disconnected');
+        setAgentState('', 'IDLE');
+      }
+
+      btnCall.onclick = () => {
+        if (!isCalling) startCall();
+        else stopCall();
+      };
+
+      // DataChannel Telemetry Handler
+      function setupDataChannel(channel) {
+        channel.onopen = () => {
+          console.log("DataChannel 'telemetry' open!");
+          channel.send(JSON.stringify({
+            type: 'config',
+            language: currentSettings.language,
+            tts_engine: currentSettings.tts_engine
+          }));
+        };
+
+        channel.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            handleTelemetry(msg);
+          } catch (e) {
+            console.warn('Failed to parse DataChannel message:', event.data);
+          }
+        };
+
+        channel.onclose = () => {
+          console.log("DataChannel 'telemetry' closed");
+        };
+      }
+
+      // Process Telemetry Messages
+      function handleTelemetry(data) {
+        switch (data.type) {
+          case 'vad_activity': {
+            const prob = Math.round((data.speech_prob || 0) * 100);
+            vadProbVal.textContent = prob;
+            vadMeterFill.style.width = prob + '%';
+
+            if (data.is_speech) {
+              vadMeterFill.className = 'vad-meter-fill speech-active';
+              vadStatusText.textContent = 'VOICE DETECTED';
+              vadStatusText.className = 'vad-status-text voice';
+              setAgentState('listening', 'USER SPEAKING');
+            } else {
+              vadMeterFill.className = 'vad-meter-fill';
+              vadStatusText.textContent = 'SILENCE / NOISE';
+              vadStatusText.className = 'vad-status-text noise';
+              if (activeAssistantBubble) {
+                setAgentState('speaking', 'AI SPEAKING');
+              } else {
+                setAgentState('listening', 'LISTENING');
+              }
+            }
+
+            if (data.rms !== undefined) {
+              vadRmsText.textContent = 'RMS: ' + Math.round(data.rms);
+            }
+            break;
+          }
+
+          case 'chunk_latency': {
+            // High frequency metric
+            break;
+          }
+
+          case 'final_transcript':
+          case 'transcript': {
+            const text = data.text;
+            const lat = data.latency_ms || 0;
+            const lang = data.language || currentSettings.language;
+
+            asrLatencyVal.textContent = lat.toFixed(1);
+            asrLangBadge.textContent = lang;
+
+            if (text) {
+              appendUserMessage(text, lat, lang);
+            }
+            break;
+          }
+
+          case 'llm_ttft': {
+            const ttft = data.ttft_ms || 0;
+            llmTtftVal.textContent = ttft.toFixed(1);
+            totalTokens = 0;
+            tokenCountText.textContent = '0 tokens';
+            startAssistantMessage();
+            setAgentState('speaking', 'AI REASONING');
+            break;
+          }
+
+          case 'llm_token': {
+            const token = data.token || '';
+            totalTokens++;
+            tokenCountText.textContent = `${totalTokens} tokens`;
+            streamAssistantToken(token);
+            setAgentState('speaking', 'AI SPEAKING');
+            break;
+          }
+
+          case 'tool_call': {
+            appendToolCallBadge(data.name, data.args, data.result);
+            break;
+          }
+
+          case 'tts_audio':
+          case 'tts_metrics': {
+            const ttsLat = data.latency_ms || 0;
+            const engine = data.engine || currentSettings.tts_engine;
+            ttsLatencyVal.textContent = ttsLat.toFixed(1);
+            ttsEngineBadge.textContent = engine.toUpperCase();
+            finalizeAssistantMessage();
+
+            // Compute End-to-End Latency
+            const asrLat = parseFloat(asrLatencyVal.textContent) || 0;
+            const ttft = parseFloat(llmTtftVal.textContent) || 0;
+            const totalE2E = asrLat + ttft + ttsLat;
+            if (totalE2E > 0) {
+              e2eText.textContent = `${totalE2E.toFixed(0)} ms`;
+              rtfText.textContent = `${(totalE2E / 1800).toFixed(2)}x`;
+            }
+            setAgentState('listening', 'LISTENING');
+            break;
+          }
+        }
+      }
+
+      // Initial Setup
+      populateDevices();
+    })();
+  </script>
+</body>
+</html>

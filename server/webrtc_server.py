@@ -41,6 +41,7 @@ from pydantic import BaseModel
 from server.asr_engine import Qwen3ASREngine
 from server.config import config
 from server.llm_engine import get_llm_engine
+from server.pipeline import RealtimeVoiceSession
 from server.tools import TOOLS_SCHEMA, COLLECTED_USER_DATA
 from server.tts_engine import MultiEngineTTSManager
 from server.vad_analyzer import SileroVADAnalyzer, VADResult
@@ -180,11 +181,25 @@ class PeerSession:
         self.server_track = server_track
         self.telemetry_channel: Optional[RTCDataChannel] = None
         self.vad = SileroVADAnalyzer()
-        self.messages: List[Dict[str, Any]] = llm_engine.create_session_messages() if llm_engine else []
-        self.current_pipeline_task: Optional[asyncio.Task] = None
         self.preferred_language: str = config.asr.language
         self.preferred_tts_engine: str = config.tts.default_engine
         self.incoming_audio_buffer: bytearray = bytearray()
+
+        async def _telemetry_cb(event_data):
+            self.send_telemetry(event_data)
+
+        async def _audio_output_cb(pcm_bytes, pcm16_arr, engine_name, latency_ms):
+            self.server_track.add_pcm16_audio(pcm16_arr)
+
+        self.voice_pipeline = RealtimeVoiceSession(
+            asr_engine=asr_engine,
+            llm_engine=llm_engine,
+            tts_manager=tts_manager,
+            telemetry_callback=_telemetry_cb,
+            audio_output_callback=_audio_output_cb,
+            preferred_lang=self.preferred_language,
+            preferred_tts=self.preferred_tts_engine,
+        )
 
     def send_telemetry(self, payload: Dict[str, Any]) -> None:
         """Send JSON telemetry payload over WebRTC DataChannel if open."""
@@ -261,108 +276,11 @@ async def run_voice_pipeline(
     if asr_engine is None or llm_engine is None or tts_manager is None:
         return
 
-    session.server_track.reset_interrupt()
-
-    # 1. Automatic Speech Recognition (ASR)
-    t0_asr = time.perf_counter()
-    transcript, detected_lang, asr_lat = await asr_engine.async_transcribe_pcm(audio_pcm16, 16000)
-
-    if not transcript:
-        logger.debug("ASR returned empty or hallucinated transcript; ignoring.")
-        return
-
-    active_lang = session.preferred_language or detected_lang or "Hindi"
-    logger.info(f"🎙️ [USER TRANSCRIBED] '{transcript}' ({active_lang}, latency={asr_lat:.1f}ms)")
-
-    session.send_telemetry({
-        "type": "final_transcript",
-        "text": transcript,
-        "language": active_lang,
-        "latency_ms": round(asr_lat, 1),
-    })
-
-    # 2. LLM Streaming & Early-Clause Real-time Synthesis
-    t0_llm = time.perf_counter()
-    sentence_delimiters = (".", "!", "?", "।", "\n")
-    clause_delimiters = (",", ";", ":", "-", "—")
-    current_sentence_buf = ""
-    first_tts_started = False
-
     try:
-        async for event in llm_engine.stream_response(transcript, session.messages):
-            if session.server_track.is_interrupted:
-                logger.info("🛑 Pipeline halted mid-generation due to barge-in interruption.")
-                break
-
-            if event.type == "token":
-                token = event.content
-                session.send_telemetry({"type": "llm_chunk", "token": token})
-                session.send_telemetry({"type": "llm_token", "token": token})
-                current_sentence_buf += token
-
-                words = current_sentence_buf.strip().split()
-                has_sentence_end = any(d in token for d in sentence_delimiters)
-                has_clause_end = any(d in token for d in clause_delimiters)
-
-                # First chunk triggers after 3-4 words for ultra-fast time-to-first-voice
-                if not first_tts_started:
-                    trigger = has_sentence_end or (has_clause_end and len(words) >= 2) or len(words) >= 4
-                else:
-                    trigger = has_sentence_end or (has_clause_end and len(words) >= 4) or len(words) >= 8
-
-                if trigger and len(current_sentence_buf.strip()) > 3:
-                    phrase_to_speak = current_sentence_buf.strip()
-                    current_sentence_buf = ""
-
-                    # Synthesize phrase
-                    _, pcm16_arr, tts_lat, engine_name = await tts_manager.synthesize(
-                        phrase_to_speak,
-                        language=active_lang,
-                        preferred_engine=session.preferred_tts_engine,
-                    )
-
-                    if not session.server_track.is_interrupted and len(pcm16_arr) > 0:
-                        session.server_track.add_pcm16_audio(pcm16_arr)
-                        if not first_tts_started:
-                            first_tts_started = True
-                            e2e_lat = (time.perf_counter() - t0_asr) * 1000
-                            session.send_telemetry({
-                                "type": "tts_start",
-                                "engine": engine_name,
-                                "tts_latency_ms": round(tts_lat, 1),
-                                "e2e_latency_ms": round(e2e_lat, 1),
-                            })
-
-            elif event.type == "tool_call":
-                logger.info(f"🔧 [TOOL EVENT] {event.tool_data['name']} executed.")
-                session.send_telemetry({
-                    "type": "tool_call",
-                    "name": event.tool_data["name"],
-                    "arguments": event.tool_data["arguments"],
-                    "result": event.tool_data["result"],
-                })
-
-            elif event.type == "done":
-                # Synthesize any trailing text in sentence buffer
-                trailing_phrase = current_sentence_buf.strip()
-                if trailing_phrase and not session.server_track.is_interrupted:
-                    _, pcm16_arr, tts_lat, engine_name = await tts_manager.synthesize(
-                        trailing_phrase,
-                        language=active_lang,
-                        preferred_engine=session.preferred_tts_engine,
-                    )
-                    if not session.server_track.is_interrupted and len(pcm16_arr) > 0:
-                        session.server_track.add_pcm16_audio(pcm16_arr)
-
-                llm_total_lat = (time.perf_counter() - t0_llm) * 1000
-                session.send_telemetry({
-                    "type": "llm_done",
-                    "full_text": event.content,
-                    "latency_ms": round(llm_total_lat, 1),
-                })
-
-    except asyncio.CancelledError:
-        logger.debug("Voice pipeline task cancelled cleanly.")
+        session.server_track.reset_interrupt()
+        session.voice_pipeline.preferred_lang = session.preferred_language
+        session.voice_pipeline.preferred_tts = session.preferred_tts_engine
+        await session.voice_pipeline.process_utterance(audio_pcm16, 16000)
     except Exception as e:
         logger.exception(f"Error in voice agent pipeline: {e}")
         session.send_telemetry({"type": "error", "message": str(e)})
@@ -551,11 +469,37 @@ async def websocket_audio_endpoint(websocket: WebSocket):
     logger.info("📡 [WEBSOCKET CONNECTED] Client connected for dual-mode voice stream.")
 
     vad = SileroVADAnalyzer()
-    session_messages = llm_engine.create_session_messages() if llm_engine else []
     preferred_lang = config.asr.language
     preferred_tts = config.tts.default_engine
-    active_llm_task = None
     sample_buffer = np.zeros(0, dtype=np.float32)
+
+    async def _ws_telemetry(data):
+        try:
+            await websocket.send_json(data)
+        except Exception:
+            pass
+
+    async def _ws_audio(pcm_bytes, pcm16_arr, engine, latency_ms):
+        try:
+            import base64
+            await websocket.send_json({
+                "type": "tts_audio",
+                "audio_base64": base64.b64encode(pcm_bytes).decode("utf-8"),
+                "latency_ms": round(latency_ms, 1),
+                "engine": engine,
+            })
+        except Exception:
+            pass
+
+    ws_pipeline = RealtimeVoiceSession(
+        asr_engine=asr_engine,
+        llm_engine=llm_engine,
+        tts_manager=tts_manager,
+        telemetry_callback=_ws_telemetry,
+        audio_output_callback=_ws_audio,
+        preferred_lang=preferred_lang,
+        preferred_tts=preferred_tts,
+    )
 
     try:
         while True:
@@ -566,8 +510,10 @@ async def websocket_audio_endpoint(websocket: WebSocket):
                     if data.get("type") == "config":
                         if "language" in data:
                             preferred_lang = data["language"]
+                            ws_pipeline.preferred_lang = preferred_lang
                         if "tts_engine" in data:
                             preferred_tts = data["tts_engine"]
+                            ws_pipeline.preferred_tts = preferred_tts
                 except Exception:
                     pass
 
@@ -593,97 +539,12 @@ async def websocket_audio_endpoint(websocket: WebSocket):
                     })
 
                     if vad_res.event == "SPEECH_START":
-                        if active_llm_task and not active_llm_task.done():
-                            active_llm_task.cancel()
+                        ws_pipeline.interrupt()
                         await websocket.send_json({"type": "interrupt", "timestamp": time.time()})
 
                     elif vad_res.event == "SPEECH_END" and vad_res.audio_utterance is not None:
                         utterance = vad_res.audio_utterance
-                        if active_llm_task and not active_llm_task.done():
-                            active_llm_task.cancel()
-
-                        async def run_ws_pipeline(audio_data):
-                            t0_asr = time.perf_counter()
-                            transcript, d_lang, asr_lat = await asr_engine.async_transcribe_pcm(audio_data, 16000)
-                            if not transcript:
-                                return
-
-                            active_l = preferred_lang or d_lang or "Hindi"
-                            logger.info(f"🎙️ [WS TRANSCRIBED] '{transcript}' ({active_l}, {asr_lat:.1f}ms)")
-                            await websocket.send_json({
-                                "type": "final_transcript",
-                                "text": transcript,
-                                "language": active_l,
-                                "latency_ms": round(asr_lat, 1),
-                            })
-
-                            t0_llm = time.perf_counter()
-                            current_sentence_buf = ""
-                            first_tts_started = False
-                            sentence_delims = (".", "!", "?", "।", "\n")
-                            clause_delims = (",", ";", ":", "-", "—")
-
-                            async for event in llm_engine.stream_response(transcript, session_messages):
-                                if event.type == "token":
-                                    token = event.content
-                                    await websocket.send_json({"type": "llm_token", "token": token})
-                                    current_sentence_buf += token
-
-                                    words = current_sentence_buf.strip().split()
-                                    has_sentence_end = any(d in token for d in sentence_delims)
-                                    has_clause_end = any(d in token for d in clause_delims)
-
-                                    if not first_tts_started:
-                                        trigger = has_sentence_end or (has_clause_end and len(words) >= 2) or len(words) >= 4
-                                    else:
-                                        trigger = has_sentence_end or (has_clause_end and len(words) >= 4) or len(words) >= 8
-
-                                    if trigger and len(current_sentence_buf.strip()) > 3:
-                                        phrase = current_sentence_buf.strip()
-                                        current_sentence_buf = ""
-                                        audio_bytes, _, tts_lat, eng_name = await tts_manager.synthesize(
-                                            phrase, language=active_l, preferred_engine=preferred_tts
-                                        )
-                                        if audio_bytes:
-                                            first_tts_started = True
-                                            import base64
-                                            await websocket.send_json({
-                                                "type": "tts_audio",
-                                                "audio_base64": base64.b64encode(audio_bytes).decode("utf-8"),
-                                                "latency_ms": round(tts_lat, 1),
-                                                "engine": eng_name,
-                                            })
-
-                                elif event.type == "tool_call":
-                                    await websocket.send_json({
-                                        "type": "tool_call",
-                                        "name": event.tool_data["name"],
-                                        "arguments": event.tool_data["arguments"],
-                                        "result": event.tool_data["result"],
-                                    })
-
-                                elif event.type == "done":
-                                    trailing = current_sentence_buf.strip()
-                                    if trailing:
-                                        audio_bytes, _, tts_lat, eng_name = await tts_manager.synthesize(
-                                            trailing, language=active_l, preferred_engine=preferred_tts
-                                        )
-                                        if audio_bytes:
-                                            import base64
-                                            await websocket.send_json({
-                                                "type": "tts_audio",
-                                                "audio_base64": base64.b64encode(audio_bytes).decode("utf-8"),
-                                                "latency_ms": round(tts_lat, 1),
-                                                "engine": eng_name,
-                                            })
-                                    llm_tot = (time.perf_counter() - t0_llm) * 1000
-                                    await websocket.send_json({
-                                        "type": "llm_done",
-                                        "full_text": event.content,
-                                        "latency_ms": round(llm_tot, 1)
-                                    })
-
-                        active_llm_task = asyncio.create_task(run_ws_pipeline(utterance))
+                        asyncio.create_task(ws_pipeline.process_utterance(utterance, 16000))
 
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected.")

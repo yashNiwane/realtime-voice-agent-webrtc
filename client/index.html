@@ -1925,27 +1925,46 @@
             break;
           }
 
-          case 'tool_call': {
-            appendToolCallBadge(data.name, data.args, data.result);
+          case 'interrupt': {
+            audioQueue.length = 0;
+            isPlayingAudio = false;
+            finalizeAssistantMessage();
+            setAgentState('listening', 'USER SPEAKING');
             break;
           }
 
-          case 'tts_audio':
-          case 'tts_metrics': {
-            const ttsLat = data.latency_ms || 0;
-            const engine = data.engine || currentSettings.tts_engine;
-            ttsLatencyVal.textContent = ttsLat.toFixed(1);
-            ttsEngineBadge.textContent = engine.toUpperCase();
-            finalizeAssistantMessage();
+          case 'tool_call': {
+            appendToolCallBadge(data.name, data.arguments || data.args, data.result);
+            break;
+          }
 
-            // Compute End-to-End Latency
-            const asrLat = parseFloat(asrLatencyVal.textContent) || 0;
-            const ttft = parseFloat(llmTtftVal.textContent) || 0;
-            const totalE2E = asrLat + ttft + ttsLat;
-            if (totalE2E > 0) {
-              e2eText.textContent = `${totalE2E.toFixed(0)} ms`;
-              rtfText.textContent = `${(totalE2E / 1800).toFixed(2)}x`;
+          case 'tts_start': {
+            const ttsLat = data.tts_latency_ms || 0;
+            const e2eLat = data.e2e_latency_ms || 0;
+            ttsLatencyVal.textContent = ttsLat.toFixed(1);
+            ttsEngineBadge.textContent = (data.engine || currentSettings.tts_engine).toUpperCase();
+            if (e2eLat > 0) {
+              e2eText.textContent = `${e2eLat.toFixed(0)} ms`;
+              rtfText.textContent = `${(e2eLat / 1800).toFixed(2)}x`;
             }
+            break;
+          }
+
+          case 'tts_audio': {
+            if (data.audio_base64) {
+              playBase64Audio(data.audio_base64);
+            }
+            if (data.latency_ms) {
+              ttsLatencyVal.textContent = data.latency_ms.toFixed(1);
+            }
+            if (data.engine) {
+              ttsEngineBadge.textContent = data.engine.toUpperCase();
+            }
+            break;
+          }
+
+          case 'llm_done': {
+            finalizeAssistantMessage();
             setAgentState('listening', 'LISTENING');
             break;
           }

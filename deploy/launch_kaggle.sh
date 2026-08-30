@@ -65,16 +65,17 @@ else
 fi
 echo "=================================================================="
 
-# 5. Start WebRTC Server with CUDA acceleration and Local llama.cpp Gemma 2B GPU Engine
-echo "🔥 Launching WebRTC Server on port 7860 with Local GPU Gemma 2B LLM..."
+# 5. Start WebRTC Server with CUDA acceleration and Local llama.cpp Gemma 4 E2B GPU Engine
+echo "🔥 Launching WebRTC Server on port 7860 with Local GPU Gemma 4 E2B LLM..."
 export HOST="0.0.0.0"
 export PORT="7860"
 export DEVICE="cuda"
 export TORCH_DTYPE="float16"
 export LLM_ENGINE_TYPE="llama_cpp"
 export LLM_N_GPU_LAYERS="-1"
-export LLM_REPO_ID="bartowski/gemma-2-2b-it-GGUF"
-export LLM_GGUF_FILENAME="gemma-2-2b-it-Q4_K_M.gguf"
+export LLM_REPO_ID="unsloth/gemma-4-E2B-it-GGUF"
+export LLM_GGUF_FILENAME="gemma-4-E2B-it-Q4_K_M.gguf"
+export LLM_MODEL="gemma-4-e2b-it"
 export PYTHONFAULTHANDLER="1"
 
 python -m server.webrtc_server

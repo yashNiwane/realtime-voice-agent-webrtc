@@ -124,17 +124,17 @@ class VADConfig(BaseModel):
 
 
 class LLMConfig(BaseModel):
-    """Configuration for Local llama-cpp GPU LLM (Gemma 2 2B Instruct) and Ollama fallback."""
+    """Configuration for Local llama-cpp GPU LLM (Gemma 4 E2B Instruct) and Ollama fallback."""
     engine_type: str = Field(
         default_factory=lambda: os.getenv("LLM_ENGINE_TYPE", "llama_cpp").lower(),
         description="LLM engine: 'llama_cpp' (local fast GPU GGUF) or 'ollama'",
     )
     repo_id: str = Field(
-        default_factory=lambda: os.getenv("LLM_REPO_ID", "bartowski/gemma-2-2b-it-GGUF"),
+        default_factory=lambda: os.getenv("LLM_REPO_ID", "unsloth/gemma-4-E2B-it-GGUF"),
         description="HuggingFace GGUF repository for local LLM",
     )
     filename: str = Field(
-        default_factory=lambda: os.getenv("LLM_GGUF_FILENAME", "gemma-2-2b-it-Q4_K_M.gguf"),
+        default_factory=lambda: os.getenv("LLM_GGUF_FILENAME", "gemma-4-E2B-it-Q4_K_M.gguf"),
         description="GGUF model filename to download and load",
     )
     model_path: Optional[str] = Field(
@@ -154,7 +154,7 @@ class LLMConfig(BaseModel):
         description="Ollama API base URL endpoint (used if engine_type='ollama')",
     )
     model: str = Field(
-        default_factory=lambda: os.getenv("LLM_MODEL", "gemma-2-2b-it"),
+        default_factory=lambda: os.getenv("LLM_MODEL", "gemma-4-e2b-it"),
         description="Model name identifier",
     )
     enable_thinking: bool = Field(

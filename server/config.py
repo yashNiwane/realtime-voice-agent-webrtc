@@ -124,17 +124,41 @@ class VADConfig(BaseModel):
 
 
 class LLMConfig(BaseModel):
-    """Configuration for Ollama Streaming LLM (Gemma 4)."""
+    """Configuration for Local llama-cpp GPU LLM (Gemma 2 2B Instruct) and Ollama fallback."""
+    engine_type: str = Field(
+        default_factory=lambda: os.getenv("LLM_ENGINE_TYPE", "llama_cpp").lower(),
+        description="LLM engine: 'llama_cpp' (local fast GPU GGUF) or 'ollama'",
+    )
+    repo_id: str = Field(
+        default_factory=lambda: os.getenv("LLM_REPO_ID", "bartowski/gemma-2-2b-it-GGUF"),
+        description="HuggingFace GGUF repository for local LLM",
+    )
+    filename: str = Field(
+        default_factory=lambda: os.getenv("LLM_GGUF_FILENAME", "gemma-2-2b-it-Q4_K_M.gguf"),
+        description="GGUF model filename to download and load",
+    )
+    model_path: Optional[str] = Field(
+        default_factory=lambda: os.getenv("LLM_MODEL_PATH", None),
+        description="Direct local path to GGUF model file (if already downloaded)",
+    )
+    n_gpu_layers: int = Field(
+        default_factory=lambda: int(os.getenv("LLM_N_GPU_LAYERS", "-1")),
+        description="Number of layers to offload to GPU (-1 = all layers on CUDA)",
+    )
+    n_ctx: int = Field(
+        default_factory=lambda: int(os.getenv("LLM_N_CTX", "2048")),
+        description="Context window length in tokens",
+    )
     base_url: str = Field(
         default_factory=lambda: os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
-        description="Ollama API base URL endpoint",
+        description="Ollama API base URL endpoint (used if engine_type='ollama')",
     )
     model: str = Field(
-        default_factory=lambda: os.getenv("OLLAMA_MODEL", "gemma4:31b-cloud"),
-        description="Ollama model identifier",
+        default_factory=lambda: os.getenv("LLM_MODEL", "gemma-2-2b-it"),
+        description="Model name identifier",
     )
     enable_thinking: bool = Field(
-        default_factory=lambda: os.getenv("OLLAMA_THINKING", "false").lower() in ("true", "1", "yes"),
+        default_factory=lambda: os.getenv("LLM_THINKING", "false").lower() in ("true", "1", "yes"),
         description="Whether thinking tokens / reasoning mode are enabled",
     )
     temperature: float = Field(
@@ -142,7 +166,7 @@ class LLMConfig(BaseModel):
         description="Sampling temperature for LLM text generation",
     )
     max_tokens: int = Field(
-        default_factory=lambda: int(os.getenv("LLM_MAX_TOKENS", "512")),
+        default_factory=lambda: int(os.getenv("LLM_MAX_TOKENS", "256")),
         description="Maximum token budget for generated response",
     )
     system_prompt: str = Field(
@@ -150,10 +174,10 @@ class LLMConfig(BaseModel):
             "LLM_SYSTEM_PROMPT",
             "You are an ultra-fast, friendly, and helpful AI voice assistant for real-time conversation.\n"
             "Rules:\n"
-            "1. NEVER output internal thoughts, reasoning steps, or <think> tags.\n"
-            "2. Keep responses brief, natural, and conversational (1-2 sentences unless details are asked).\n"
-            "3. Speak naturally in Hindi or English (or Hinglish) matching the user's language.\n"
-            "4. When asked about user information, weather, or time, invoke the appropriate tools accurately."
+            "1. Keep responses brief, natural, and conversational (1-2 sentences unless details are asked).\n"
+            "2. Speak naturally in Hindi or English (or Hinglish) matching the user's language.\n"
+            "3. When asked about user information, weather, or time, invoke the appropriate tools accurately.\n"
+            "4. NEVER output internal thoughts, reasoning steps, or <think> tags."
         ),
         description="System prompt defining the voice persona and behavioral constraints",
     )

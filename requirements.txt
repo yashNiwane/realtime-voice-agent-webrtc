@@ -6,6 +6,8 @@ av>=12.0.0
 qwen-asr
 silero-vad>=5.1.0
 edge-tts>=7.0.0
+huggingface-hub>=0.20.0
+llama-cpp-python>=0.2.80
 
 # Utilities & Config
 pydantic-settings>=2.0.0

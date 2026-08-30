@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Kaggle GPU Launcher for Realtime WebRTC Voice Agent
-# (Qwen3-ASR FP16 + Silero VAD + Ollama Gemma 4 + VITS/Edge-TTS + Cloudflare Tunnel)
+# (Qwen3-ASR FP16 + Silero VAD + Local GPU LLaMA.cpp Gemma 2 2B + VITS/Edge-TTS + Cloudflare Tunnel)
 # ==============================================================================
 
 set -e
@@ -23,8 +23,9 @@ echo "📦 Installing system libsrtp2 development headers..."
 apt-get update -qq && apt-get install -y -qq libsrtp2-dev pkg-config wget curl > /dev/null 2>&1 || true
 
 # 2. Python dependencies (force compile pylibsrtp from source against system libsrtp2)
-echo "🐍 Installing Python dependencies with native OpenSSL 3 bindings..."
+echo "🐍 Installing Python dependencies with native OpenSSL 3 bindings & llama-cpp CUDA..."
 pip install --quiet --no-binary pylibsrtp --no-cache-dir pylibsrtp
+pip install --quiet llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu122 || pip install --quiet llama-cpp-python
 pip install --quiet -r requirements.txt
 
 # Verify aiortc / pylibsrtp import
@@ -64,12 +65,16 @@ else
 fi
 echo "=================================================================="
 
-# 5. Start WebRTC Server with CUDA acceleration
-echo "🔥 Launching WebRTC Server on port 7860..."
+# 5. Start WebRTC Server with CUDA acceleration and Local llama.cpp Gemma 2B GPU Engine
+echo "🔥 Launching WebRTC Server on port 7860 with Local GPU Gemma 2B LLM..."
 export HOST="0.0.0.0"
 export PORT="7860"
 export DEVICE="cuda"
 export TORCH_DTYPE="float16"
+export LLM_ENGINE_TYPE="llama_cpp"
+export LLM_N_GPU_LAYERS="-1"
+export LLM_REPO_ID="bartowski/gemma-2-2b-it-GGUF"
+export LLM_GGUF_FILENAME="gemma-2-2b-it-Q4_K_M.gguf"
 export PYTHONFAULTHANDLER="1"
 
 python -m server.webrtc_server

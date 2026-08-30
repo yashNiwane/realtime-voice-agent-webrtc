@@ -40,14 +40,14 @@ from pydantic import BaseModel
 
 from server.asr_engine import Qwen3ASREngine
 from server.config import config
-from server.llm_engine import OllamaLLMEngine
+from server.llm_engine import get_llm_engine
 from server.tools import TOOLS_SCHEMA, COLLECTED_USER_DATA
 from server.tts_engine import MultiEngineTTSManager
 from server.vad_analyzer import SileroVADAnalyzer, VADResult
 
 # Global Engine Singletons
 asr_engine: Optional[Qwen3ASREngine] = None
-llm_engine: Optional[OllamaLLMEngine] = None
+llm_engine: Optional[Any] = None
 tts_manager: Optional[MultiEngineTTSManager] = None
 active_peer_connections: Set[RTCPeerConnection] = set()
 
@@ -205,14 +205,14 @@ async def lifespan(app: FastAPI):
     print(f" * Web Dashboard: http://localhost:{config.webrtc.port}")
     print(f" * ASR Engine:    {config.asr.model_path} (Device: {config.asr.device}, DType: {config.asr.torch_dtype})")
     print(f" * VAD Engine:    Silero Neural VAD (Confidence: {config.vad.confidence:.2f})")
-    print(f" * LLM Engine:    {config.llm.model} @ {config.llm.base_url}")
+    print(f" * LLM Engine:    {config.llm.model} (Type: {config.llm.engine_type}, GGUF: {config.llm.filename})")
     print(f" * TTS Engine:    {config.tts.default_engine} (Sample Rate: {config.tts.sample_rate}Hz)")
     print(f" * WebRTC STUN:   {config.webrtc.stun_servers}")
     print("=" * 72)
 
     logger.info("Initializing neural models and inference pipelines...")
     asr_engine = Qwen3ASREngine(asr_config=config.asr)
-    llm_engine = OllamaLLMEngine(llm_config=config.llm)
+    llm_engine = get_llm_engine(llm_config=config.llm)
     tts_manager = MultiEngineTTSManager(tts_config=config.tts)
     logger.info("✨ All server components initialized and warm.")
 

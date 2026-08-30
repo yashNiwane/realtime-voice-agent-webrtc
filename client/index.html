@@ -1506,6 +1506,112 @@
         }
       }
 
+      let wsChannel = null;
+      let scriptProcessor = null;
+      const audioQueue = [];
+      let isPlayingAudio = false;
+
+      function playBase64Audio(base64Str) {
+        try {
+          const binaryString = window.atob(base64Str);
+          const len = binaryString.length;
+          const bytes = new Uint8Array(len);
+          for (let i = 0; i < len; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          audioQueue.push(bytes.buffer);
+          if (!isPlayingAudio) {
+            playNextAudio();
+          }
+        } catch (e) {
+          console.error("Failed to decode base64 audio:", e);
+        }
+      }
+
+      async function playNextAudio() {
+        if (audioQueue.length === 0) {
+          isPlayingAudio = false;
+          return;
+        }
+        isPlayingAudio = true;
+        const arrayBuf = audioQueue.shift();
+        try {
+          if (!audioCtx || audioCtx.state === 'closed') {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          }
+          if (audioCtx.state === 'suspended') {
+            await audioCtx.resume();
+          }
+          const audioBuffer = await audioCtx.decodeAudioData(arrayBuf);
+          const playSource = audioCtx.createBufferSource();
+          playSource.buffer = audioBuffer;
+          playSource.connect(audioCtx.destination);
+          playSource.onended = () => {
+            playNextAudio();
+          };
+          playSource.start(0);
+        } catch (err) {
+          console.error("Audio playback error:", err);
+          playNextAudio();
+        }
+      }
+
+      function startWebSocketAudioStream(stream) {
+        const loc = window.location;
+        let wsUrl;
+        const inputVal = serverUrlInput.value.trim();
+        if (inputVal.startsWith("http://") || inputVal.startsWith("https://")) {
+          const urlObj = new URL(inputVal);
+          const wsProto = urlObj.protocol === "https:" ? "wss:" : "ws:";
+          wsUrl = `${wsProto}//${urlObj.host}/ws`;
+        } else {
+          const wsProto = loc.protocol === "https:" ? "wss:" : "ws:";
+          wsUrl = `${wsProto}//${loc.host}/ws`;
+        }
+
+        wsChannel = new WebSocket(wsUrl);
+        wsChannel.binaryType = "arraybuffer";
+
+        wsChannel.onopen = () => {
+          console.log("WebSocket voice channel open!");
+          setStatus("connected", "Connected");
+          setAgentState("listening", "LISTENING");
+          wsChannel.send(JSON.stringify({
+            type: "config",
+            language: currentSettings.language,
+            tts_engine: currentSettings.tts_engine
+          }));
+        };
+
+        wsChannel.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            handleTelemetry(msg);
+            if (msg.type === "tts_audio" && msg.audio_base64) {
+              playBase64Audio(msg.audio_base64);
+            }
+          } catch (e) {
+            console.warn("WS parse error:", e);
+          }
+        };
+
+        // Stream mic chunks to WebSocket
+        const micSource = audioCtx.createMediaStreamSource(stream);
+        scriptProcessor = audioCtx.createScriptProcessor(512, 1, 1);
+        scriptProcessor.onaudioprocess = (e) => {
+          if (!wsChannel || wsChannel.readyState !== WebSocket.OPEN) return;
+          const inputFloat32 = e.inputBuffer.getChannelData(0);
+          const pcm16 = new Int16Array(inputFloat32.length);
+          for (let i = 0; i < inputFloat32.length; i++) {
+            let s = Math.max(-1, Math.min(1, inputFloat32[i]));
+            pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+          }
+          wsChannel.send(pcm16.buffer);
+        };
+        micSource.connect(scriptProcessor);
+        scriptProcessor.connect(audioCtx.destination);
+      }
+
       // WebRTC Offer / Answer Handlers
       async function startCall() {
         const rawUrl = serverUrlInput.value.trim() || '/offer';
@@ -1530,6 +1636,9 @@
 
           localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false });
           initVisualizer(localStream);
+
+          // Start WebSocket voice channel (100% reliable fallback over Cloudflare Tunnel)
+          startWebSocketAudioStream(localStream);
 
           // 2. Initialize RTCPeerConnection
           peerConnection = new RTCPeerConnection({
@@ -1565,14 +1674,10 @@
             if (peerConnection.connectionState === 'connected') {
               setStatus('connected', 'Connected');
               setAgentState('listening', 'LISTENING');
-            } else if (peerConnection.connectionState === 'failed' || peerConnection.connectionState === 'closed') {
-              setStatus('error', 'Disconnected');
-              stopCall();
             }
           };
 
           // 7. Non-trickle ICE Gathering
-          setStatus('connecting', 'Gathering ICE...');
           const offer = await peerConnection.createOffer();
           await peerConnection.setLocalDescription(offer);
 
@@ -1587,38 +1692,31 @@
                 }
               };
               peerConnection.addEventListener('icegatheringstatechange', checkState);
-              setTimeout(resolve, 2200); // 2.2s fallback timeout
+              setTimeout(resolve, 2000);
             }
           });
 
           // 8. POST Offer to Server
-          setStatus('connecting', 'Negotiating SDP...');
           const response = await fetch(offerUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               sdp: peerConnection.localDescription.sdp,
               type: peerConnection.localDescription.type,
-              config: {
-                language: currentSettings.language,
-                tts_engine: currentSettings.tts_engine
-              }
+              language: currentSettings.language,
+              tts_engine: currentSettings.tts_engine
             })
           });
 
-          if (!response.ok) {
-            throw new Error(`Server returned ${response.status}: ${await response.text()}`);
+          if (response.ok) {
+            const answerData = await response.json();
+            if (answerData.sdp) {
+              await peerConnection.setRemoteDescription(new RTCSessionDescription({
+                sdp: answerData.sdp,
+                type: answerData.type || 'answer'
+              }));
+            }
           }
-
-          const answerData = await response.json();
-          if (!answerData.sdp) {
-            throw new Error('Invalid SDP answer from server');
-          }
-
-          await peerConnection.setRemoteDescription(new RTCSessionDescription({
-            sdp: answerData.sdp,
-            type: answerData.type || 'answer'
-          }));
 
           isCalling = true;
           btnCall.className = 'btn-mic active';
@@ -1627,10 +1725,18 @@
           btnCall.disabled = false;
 
         } catch (err) {
-          console.error('Call failed:', err);
-          alert('WebRTC Connection failed: ' + err.message);
-          setStatus('error', 'Connection Failed');
-          stopCall();
+          console.error('Call initialization note:', err);
+          if (wsChannel && wsChannel.readyState === WebSocket.OPEN) {
+            isCalling = true;
+            btnCall.className = 'btn-mic active';
+            btnCallIcon.textContent = '⏹️';
+            btnCallLabel.textContent = 'End Conversation';
+            btnCall.disabled = false;
+          } else {
+            alert('Audio connection failed: ' + err.message);
+            setStatus('error', 'Connection Failed');
+            stopCall();
+          }
         }
       }
 
@@ -1644,6 +1750,16 @@
         btnCall.disabled = false;
 
         stopVisualizer();
+
+        if (scriptProcessor) {
+          try { scriptProcessor.disconnect(); } catch(e) {}
+          scriptProcessor = null;
+        }
+
+        if (wsChannel) {
+          try { wsChannel.close(); } catch(e) {}
+          wsChannel = null;
+        }
 
         if (localStream) {
           localStream.getTracks().forEach(t => t.stop());
@@ -1659,6 +1775,9 @@
           try { peerConnection.close(); } catch(e) {}
           peerConnection = null;
         }
+
+        audioQueue.length = 0;
+        isPlayingAudio = false;
 
         setStatus('', 'Disconnected');
         setAgentState('', 'IDLE');

@@ -216,30 +216,24 @@ class Qwen3ASREngine:
         if len(pcm_float) < 400:
             return "", self.language or "", 0.0
 
-        inputs = self.processor(
-            text=[self.prompt], audio=[pcm_float], return_tensors="pt", padding=True
-        )
-        inputs = inputs.to(self.device)
-        if self.is_cuda and self.dtype_str in ("float16", "fp16", "half"):
-            if "input_features" in inputs and inputs["input_features"].dtype == torch.float32:
-                inputs["input_features"] = inputs["input_features"].half()
+        try:
+            results = self.wrapper.transcribe(
+                audio=(pcm_float, 16000),
+                language=self.language,
+            )
+            raw_out = results[0].text if results else ""
+            detected_lang = results[0].language if results else (self.language or "")
+        except Exception as e:
+            logger.warning(f"Qwen3-ASR transcribe error: {e}")
+            raw_out = ""
+            detected_lang = self.language or ""
 
-        text_ids = self.model.generate(**inputs, max_new_tokens=self.max_new_tokens)
-        decoded = self.processor.batch_decode(
-            text_ids.sequences[:, inputs["input_ids"].shape[1]:],
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=False,
-        )
-
-        raw_out = decoded[0] if decoded else ""
-        lang, text = parse_asr_output(raw_out, user_language=self.language)
         latency_ms = (time.perf_counter() - t0) * 1000
-
-        final_text = text.strip() if text else ""
+        final_text = raw_out.strip() if raw_out else ""
         if not is_valid_speech_text(final_text):
             final_text = ""
 
-        return final_text, lang or self.language or "", latency_ms
+        return final_text, detected_lang, latency_ms
 
     async def async_transcribe_pcm(
         self, pcm_data: np.ndarray, sr: int = 16000

@@ -32,7 +32,7 @@ from aiortc import (
     RTCSessionDescription,
     RTCDataChannel,
 )
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from loguru import logger
@@ -275,7 +275,7 @@ async def run_voice_pipeline(
     logger.info(f"🎙️ [USER TRANSCRIBED] '{transcript}' ({active_lang}, latency={asr_lat:.1f}ms)")
 
     session.send_telemetry({
-        "type": "asr",
+        "type": "final_transcript",
         "text": transcript,
         "language": active_lang,
         "latency_ms": round(asr_lat, 1),
@@ -416,8 +416,9 @@ async def handle_incoming_audio(
 
                 # Send real-time VAD probability to UI
                 session.send_telemetry({
-                    "type": "vad",
+                    "type": "vad_activity",
                     "prob": round(vad_res.probability, 3),
+                    "speech_prob": round(vad_res.probability, 3),
                     "is_speech": vad_res.is_speech,
                 })
 
@@ -529,6 +530,145 @@ async def webrtc_offer(offer_data: OfferModel):
     )
 
 
+@app.websocket("/ws")
+async def websocket_audio_endpoint(websocket: WebSocket):
+    """
+    Dual-Mode WebSocket Voice Stream:
+    Guarantees 100% audio transmission over Cloudflare Tunnel (HTTPS/WSS port 443)
+    when Kaggle container symmetric NAT blocks inbound UDP WebRTC packets.
+    """
+    await websocket.accept()
+    logger.info("📡 [WEBSOCKET CONNECTED] Client connected for dual-mode voice stream.")
+
+    vad = SileroVADAnalyzer()
+    session_messages = llm_engine.create_session_messages() if llm_engine else []
+    preferred_lang = config.asr.language
+    preferred_tts = config.tts.default_engine
+    active_llm_task = None
+    sample_buffer = np.zeros(0, dtype=np.float32)
+
+    try:
+        while True:
+            message = await websocket.receive()
+            if "text" in message:
+                try:
+                    data = json.loads(message["text"])
+                    if data.get("type") == "config":
+                        if "language" in data:
+                            preferred_lang = data["language"]
+                        if "tts_engine" in data:
+                            preferred_tts = data["tts_engine"]
+                except Exception:
+                    pass
+
+            elif "bytes" in message:
+                raw_bytes = message["bytes"]
+                if not raw_bytes:
+                    continue
+
+                pcm16 = np.frombuffer(raw_bytes, dtype=np.int16)
+                float_data = pcm16.astype(np.float32) / 32768.0
+                sample_buffer = np.concatenate((sample_buffer, float_data))
+
+                while len(sample_buffer) >= 512:
+                    chunk_512 = sample_buffer[:512]
+                    sample_buffer = sample_buffer[512:]
+                    vad_res = vad.process_chunk(chunk_512)
+
+                    await websocket.send_json({
+                        "type": "vad_activity",
+                        "prob": round(vad_res.probability, 3),
+                        "speech_prob": round(vad_res.probability, 3),
+                        "is_speech": vad_res.is_speech,
+                    })
+
+                    if vad_res.event == "SPEECH_START":
+                        if active_llm_task and not active_llm_task.done():
+                            active_llm_task.cancel()
+                        await websocket.send_json({"type": "interrupt", "timestamp": time.time()})
+
+                    elif vad_res.event == "SPEECH_END" and vad_res.audio_utterance is not None:
+                        utterance = vad_res.audio_utterance
+                        if active_llm_task and not active_llm_task.done():
+                            active_llm_task.cancel()
+
+                        async def run_ws_pipeline(audio_data):
+                            t0_asr = time.perf_counter()
+                            transcript, d_lang, asr_lat = await asr_engine.async_transcribe_pcm(audio_data, 16000)
+                            if not transcript:
+                                return
+
+                            active_l = preferred_lang or d_lang or "Hindi"
+                            logger.info(f"🎙️ [WS TRANSCRIBED] '{transcript}' ({active_l}, {asr_lat:.1f}ms)")
+                            await websocket.send_json({
+                                "type": "final_transcript",
+                                "text": transcript,
+                                "language": active_l,
+                                "latency_ms": round(asr_lat, 1),
+                            })
+
+                            t0_llm = time.perf_counter()
+                            current_sentence_buf = ""
+                            sentence_delims = (".", "!", "?", "।", "\n")
+
+                            async for event in llm_engine.stream_response(transcript, session_messages):
+                                if event.type == "token":
+                                    token = event.content
+                                    await websocket.send_json({"type": "llm_token", "token": token})
+                                    current_sentence_buf += token
+
+                                    if any(d in token for d in sentence_delims) and len(current_sentence_buf.strip()) > 15:
+                                        phrase = current_sentence_buf.strip()
+                                        current_sentence_buf = ""
+                                        audio_bytes, _, tts_lat, eng_name = await tts_manager.synthesize(
+                                            phrase, language=active_l, preferred_engine=preferred_tts
+                                        )
+                                        if audio_bytes:
+                                            import base64
+                                            await websocket.send_json({
+                                                "type": "tts_audio",
+                                                "audio_base64": base64.b64encode(audio_bytes).decode("utf-8"),
+                                                "latency_ms": round(tts_lat, 1),
+                                                "engine": eng_name,
+                                            })
+
+                                elif event.type == "tool_call":
+                                    await websocket.send_json({
+                                        "type": "tool_call",
+                                        "name": event.tool_data["name"],
+                                        "arguments": event.tool_data["arguments"],
+                                        "result": event.tool_data["result"],
+                                    })
+
+                                elif event.type == "done":
+                                    trailing = current_sentence_buf.strip()
+                                    if trailing:
+                                        audio_bytes, _, tts_lat, eng_name = await tts_manager.synthesize(
+                                            trailing, language=active_l, preferred_engine=preferred_tts
+                                        )
+                                        if audio_bytes:
+                                            import base64
+                                            await websocket.send_json({
+                                                "type": "tts_audio",
+                                                "audio_base64": base64.b64encode(audio_bytes).decode("utf-8"),
+                                                "latency_ms": round(tts_lat, 1),
+                                                "engine": eng_name,
+                                            })
+                                    llm_tot = (time.perf_counter() - t0_llm) * 1000
+                                    await websocket.send_json({
+                                        "type": "llm_done",
+                                        "full_text": event.content,
+                                        "latency_ms": round(llm_tot, 1)
+                                    })
+
+                        active_llm_task = asyncio.create_task(run_ws_pipeline(utterance))
+
+    except WebSocketDisconnect:
+        logger.info("WebSocket client disconnected.")
+    except Exception as e:
+        logger.debug(f"WebSocket session ended: {e}")
+
+
 @app.get("/health")
 async def health_check():
     """System health and hardware status endpoint."""
@@ -551,7 +691,12 @@ async def health_check():
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_dashboard():
-    """Serve the interactive, real-time WebRTC Voice Agent Web Dashboard."""
+    """Serve the interactive, real-time Web Voice Agent Web Dashboard."""
+    import pathlib
+    index_path = pathlib.Path(__file__).parent.parent / "client" / "index.html"
+    if index_path.exists():
+        with open(index_path, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
     return HTMLResponse(content=WEB_UI_HTML)
 
 

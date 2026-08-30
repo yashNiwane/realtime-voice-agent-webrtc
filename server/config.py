@@ -100,11 +100,11 @@ class ASRConfig(BaseModel):
 class VADConfig(BaseModel):
     """Configuration for Silero Neural Voice Activity Detector."""
     confidence: float = Field(
-        default_factory=lambda: float(os.getenv("VAD_CONFIDENCE", "0.70")),
+        default_factory=lambda: float(os.getenv("VAD_CONFIDENCE", "0.45")),
         description="Speech probability threshold (0.0 - 1.0) to qualify as speech",
     )
     start_secs: float = Field(
-        default_factory=lambda: float(os.getenv("VAD_START_SECS", "0.20")),
+        default_factory=lambda: float(os.getenv("VAD_START_SECS", "0.15")),
         description="Minimum duration of continuous speech to trigger speech start",
     )
     stop_secs: float = Field(

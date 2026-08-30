@@ -119,9 +119,20 @@ class SileroVADAnalyzer:
             else:
                 chunk_512 = chunk_512.astype(np.float32)
 
+        # Compute RMS and peak amplitude
+        peak = float(np.max(np.abs(chunk_512)))
+        rms = float(np.sqrt(np.mean(chunk_512**2)))
+
         tensor_chunk = torch.from_numpy(chunk_512).float()
         raw_prob = self.model(tensor_chunk, self.sample_rate)
         speech_prob = float(raw_prob.item())
+
+        # Adaptive boost for quiet or distant microphones
+        if speech_prob < self.confidence and rms > 0.006 and peak > 0.015:
+            norm_chunk = (chunk_512 / max(peak, 0.04)) * 0.40
+            norm_tensor = torch.from_numpy(norm_chunk.astype(np.float32)).float()
+            norm_prob = float(self.model(norm_tensor, self.sample_rate).item())
+            speech_prob = max(speech_prob, norm_prob)
 
         is_current_speech = speech_prob >= self.confidence
         event: Optional[str] = None

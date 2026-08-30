@@ -1556,6 +1556,21 @@
         }
       }
 
+      function resampleTo16k(audioBuffer, fromSampleRate) {
+        if (!fromSampleRate || fromSampleRate === 16000) return audioBuffer;
+        const ratio = fromSampleRate / 16000;
+        const newLength = Math.round(audioBuffer.length / ratio);
+        const result = new Float32Array(newLength);
+        for (let i = 0; i < newLength; i++) {
+          const originIndex = i * ratio;
+          const indexFloor = Math.floor(originIndex);
+          const indexCeil = Math.min(audioBuffer.length - 1, indexFloor + 1);
+          const interp = originIndex - indexFloor;
+          result[i] = (audioBuffer[indexFloor] || 0) * (1 - interp) + (audioBuffer[indexCeil] || 0) * interp;
+        }
+        return result;
+      }
+
       function startWebSocketAudioStream(stream) {
         const loc = window.location;
         let wsUrl;
@@ -1595,15 +1610,21 @@
           }
         };
 
-        // Stream mic chunks to WebSocket
+        // Stream mic chunks to WebSocket with true 16kHz resampling
+        if (!audioCtx || audioCtx.state === 'closed') {
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        const inRate = audioCtx.sampleRate || 48000;
         const micSource = audioCtx.createMediaStreamSource(stream);
-        scriptProcessor = audioCtx.createScriptProcessor(512, 1, 1);
+        scriptProcessor = audioCtx.createScriptProcessor(2048, 1, 1);
+
         scriptProcessor.onaudioprocess = (e) => {
           if (!wsChannel || wsChannel.readyState !== WebSocket.OPEN) return;
           const inputFloat32 = e.inputBuffer.getChannelData(0);
-          const pcm16 = new Int16Array(inputFloat32.length);
-          for (let i = 0; i < inputFloat32.length; i++) {
-            let s = Math.max(-1, Math.min(1, inputFloat32[i]));
+          const resampled = resampleTo16k(inputFloat32, inRate);
+          const pcm16 = new Int16Array(resampled.length);
+          for (let i = 0; i < resampled.length; i++) {
+            let s = Math.max(-1, Math.min(1, resampled[i]));
             pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
           }
           wsChannel.send(pcm16.buffer);

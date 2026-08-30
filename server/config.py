@@ -186,8 +186,8 @@ class LLMConfig(BaseModel):
 class TTSConfig(BaseModel):
     """Configuration for Multi-Engine Text-to-Speech synthesizer."""
     default_engine: str = Field(
-        default_factory=lambda: os.getenv("TTS_ENGINE", "vits").lower(),
-        description="Default TTS engine: 'vits' (local offline), 'edge' (free neural cloud), 'cartesia' (Sonic-3)",
+        default_factory=lambda: os.getenv("TTS_ENGINE", "edge").lower(),
+        description="Default TTS engine: 'edge' (HD human-like neural), 'vits' (local offline), 'cartesia' (Sonic-3)",
     )
     sample_rate: int = Field(
         default_factory=lambda: int(os.getenv("TTS_SAMPLE_RATE", "48000")),
@@ -215,11 +215,11 @@ class TTSConfig(BaseModel):
     )
     edge_voice_hi: str = Field(
         default_factory=lambda: os.getenv("EDGE_VOICE_HI", "hi-IN-SwaraNeural"),
-        description="Microsoft Edge Neural Voice for Hindi",
+        description="Microsoft Edge Neural Voice for Hindi (Swara)",
     )
     edge_voice_en: str = Field(
-        default_factory=lambda: os.getenv("EDGE_VOICE_EN", "en-US-JennyNeural"),
-        description="Microsoft Edge Neural Voice for English",
+        default_factory=lambda: os.getenv("EDGE_VOICE_EN", "en-IN-NeerjaNeural"),
+        description="Microsoft Edge Neural Voice for Indian English (Neerja)",
     )
 
 

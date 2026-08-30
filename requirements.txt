@@ -6,6 +6,7 @@ av>=12.0.0
 qwen-asr
 silero-vad>=5.1.0
 edge-tts>=7.0.0
+kokoro>=0.8.4
 huggingface-hub>=0.20.0
 llama-cpp-python>=0.2.80
 
@@ -14,3 +15,4 @@ pydantic-settings>=2.0.0
 python-dotenv>=1.0.0
 loguru>=0.7.2
 scipy>=1.11.0
+soundfile>=0.12.1

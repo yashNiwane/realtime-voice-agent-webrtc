@@ -186,12 +186,24 @@ class LLMConfig(BaseModel):
 class TTSConfig(BaseModel):
     """Configuration for Multi-Engine Text-to-Speech synthesizer."""
     default_engine: str = Field(
-        default_factory=lambda: os.getenv("TTS_ENGINE", "edge").lower(),
-        description="Default TTS engine: 'edge' (HD human-like neural), 'vits' (local offline), 'cartesia' (Sonic-3)",
+        default_factory=lambda: os.getenv("TTS_ENGINE", "kokoro").lower(),
+        description="Default TTS engine: 'kokoro' (realtime GPU 82M), 'edge' (HD neural cloud), 'vits' (local offline), 'cartesia'",
     )
     sample_rate: int = Field(
         default_factory=lambda: int(os.getenv("TTS_SAMPLE_RATE", "48000")),
         description="Output audio sample rate for WebRTC stream (48000 Hz standard)",
+    )
+    kokoro_voice_hi: str = Field(
+        default_factory=lambda: os.getenv("KOKORO_VOICE_HI", "hf_alpha"),
+        description="Kokoro-82M voice for Hindi ('hf_alpha', 'hf_beta', 'hm_omega', 'hm_psi')",
+    )
+    kokoro_voice_en: str = Field(
+        default_factory=lambda: os.getenv("KOKORO_VOICE_EN", "af_heart"),
+        description="Kokoro-82M voice for English ('af_heart', 'af_bella', 'am_adam')",
+    )
+    kokoro_speed: float = Field(
+        default_factory=lambda: float(os.getenv("KOKORO_SPEED", "1.05")),
+        description="Speech pace multiplier for Kokoro-82M",
     )
     vits_model_id: str = Field(
         default_factory=lambda: os.getenv("VITS_MODEL_ID", "facebook/mms-tts-hin"),
@@ -199,7 +211,7 @@ class TTSConfig(BaseModel):
     )
     vits_device: str = Field(
         default_factory=lambda: os.getenv("VITS_DEVICE", get_default_device()),
-        description="Compute device for VITS neural inference ('cuda' or 'cpu')",
+        description="Compute device for VITS/Kokoro neural inference ('cuda' or 'cpu')",
     )
     cartesia_api_key: str = Field(
         default_factory=lambda: os.getenv("CARTESIA_API_KEY", ""),

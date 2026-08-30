@@ -1123,11 +1123,27 @@
         <div class="setting-description">Select primary voice synthesis provider.</div>
         
         <div class="engine-options">
-          <label class="engine-card selected" id="cardTtsVits">
-            <input type="radio" name="tts_engine" value="vits" checked>
+          <label class="engine-card selected" id="cardTtsKokoro">
+            <input type="radio" name="tts_engine" value="kokoro" checked>
             <div class="engine-info">
-              <h4>🏠 VITS Local Neural</h4>
-              <p>Zero-latency offline synthesized speech</p>
+              <h4>🔥 Kokoro-82M (Realtime GPU)</h4>
+              <p>24kHz studio natural voice &lt;30ms latency</p>
+            </div>
+          </label>
+
+          <label class="engine-card" id="cardTtsEdge">
+            <input type="radio" name="tts_engine" value="edge">
+            <div class="engine-info">
+              <h4>🌐 Edge-TTS Neural</h4>
+              <p>Microsoft Swara &amp; Neerja studio voices</p>
+            </div>
+          </label>
+
+          <label class="engine-card" id="cardTtsVits">
+            <input type="radio" name="tts_engine" value="vits">
+            <div class="engine-info">
+              <h4>🏠 VITS Local Offline</h4>
+              <p>Meta MMS Hindi offline synthesis</p>
             </div>
           </label>
 
@@ -1136,14 +1152,6 @@
             <div class="engine-info">
               <h4>⚡ Cartesia Sonic-3</h4>
               <p>Ultra-low latency streaming cloud voice</p>
-            </div>
-          </label>
-
-          <label class="engine-card" id="cardTtsEdge">
-            <input type="radio" name="tts_engine" value="edge">
-            <div class="engine-info">
-              <h4>🌐 Edge-TTS Neural</h4>
-              <p>High-quality multilingual cloud voices</p>
             </div>
           </label>
         </div>
@@ -1258,7 +1266,7 @@
       // Current Settings
       let currentSettings = {
         language: 'Hindi',
-        tts_engine: 'edge',
+        tts_engine: 'kokoro',
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,

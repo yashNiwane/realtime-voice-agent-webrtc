@@ -23,9 +23,10 @@ echo "📦 Installing system libsrtp2 development headers..."
 apt-get update -qq && apt-get install -y -qq libsrtp2-dev pkg-config wget curl > /dev/null 2>&1 || true
 
 # 2. Python dependencies (force compile pylibsrtp from source against system libsrtp2)
-echo "🐍 Installing Python dependencies with native OpenSSL 3 bindings & llama-cpp CUDA..."
+echo "🐍 Installing Python dependencies with native OpenSSL 3 bindings, llama-cpp CUDA & Kokoro-82M..."
 pip install --quiet --no-binary pylibsrtp --no-cache-dir pylibsrtp
 pip install --quiet llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu122 || pip install --quiet llama-cpp-python
+pip install --quiet kokoro soundfile
 pip install --quiet -r requirements.txt
 
 # Verify aiortc / pylibsrtp import

@@ -281,9 +281,10 @@ async def run_voice_pipeline(
         "latency_ms": round(asr_lat, 1),
     })
 
-    # 2. LLM Streaming & Real-time Sentence Synthesis
+    # 2. LLM Streaming & Early-Clause Real-time Synthesis
     t0_llm = time.perf_counter()
     sentence_delimiters = (".", "!", "?", "।", "\n")
+    clause_delimiters = (",", ";", ":", "-", "—")
     current_sentence_buf = ""
     first_tts_started = False
 
@@ -296,11 +297,20 @@ async def run_voice_pipeline(
             if event.type == "token":
                 token = event.content
                 session.send_telemetry({"type": "llm_chunk", "token": token})
+                session.send_telemetry({"type": "llm_token", "token": token})
                 current_sentence_buf += token
 
-                # If sentence boundary reached and buffer has substantial content
-                has_delim = any(delim in token for delim in sentence_delimiters)
-                if has_delim and len(current_sentence_buf.strip()) > 15:
+                words = current_sentence_buf.strip().split()
+                has_sentence_end = any(d in token for d in sentence_delimiters)
+                has_clause_end = any(d in token for d in clause_delimiters)
+
+                # First chunk triggers after 3-4 words for ultra-fast time-to-first-voice
+                if not first_tts_started:
+                    trigger = has_sentence_end or (has_clause_end and len(words) >= 2) or len(words) >= 4
+                else:
+                    trigger = has_sentence_end or (has_clause_end and len(words) >= 4) or len(words) >= 8
+
+                if trigger and len(current_sentence_buf.strip()) > 3:
                     phrase_to_speak = current_sentence_buf.strip()
                     current_sentence_buf = ""
 
@@ -609,7 +619,9 @@ async def websocket_audio_endpoint(websocket: WebSocket):
 
                             t0_llm = time.perf_counter()
                             current_sentence_buf = ""
+                            first_tts_started = False
                             sentence_delims = (".", "!", "?", "।", "\n")
+                            clause_delims = (",", ";", ":", "-", "—")
 
                             async for event in llm_engine.stream_response(transcript, session_messages):
                                 if event.type == "token":
@@ -617,13 +629,23 @@ async def websocket_audio_endpoint(websocket: WebSocket):
                                     await websocket.send_json({"type": "llm_token", "token": token})
                                     current_sentence_buf += token
 
-                                    if any(d in token for d in sentence_delims) and len(current_sentence_buf.strip()) > 15:
+                                    words = current_sentence_buf.strip().split()
+                                    has_sentence_end = any(d in token for d in sentence_delims)
+                                    has_clause_end = any(d in token for d in clause_delims)
+
+                                    if not first_tts_started:
+                                        trigger = has_sentence_end or (has_clause_end and len(words) >= 2) or len(words) >= 4
+                                    else:
+                                        trigger = has_sentence_end or (has_clause_end and len(words) >= 4) or len(words) >= 8
+
+                                    if trigger and len(current_sentence_buf.strip()) > 3:
                                         phrase = current_sentence_buf.strip()
                                         current_sentence_buf = ""
                                         audio_bytes, _, tts_lat, eng_name = await tts_manager.synthesize(
                                             phrase, language=active_l, preferred_engine=preferred_tts
                                         )
                                         if audio_bytes:
+                                            first_tts_started = True
                                             import base64
                                             await websocket.send_json({
                                                 "type": "tts_audio",

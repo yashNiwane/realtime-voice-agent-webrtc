@@ -1624,9 +1624,6 @@
           try {
             const msg = JSON.parse(event.data);
             handleTelemetry(msg);
-            if (msg.type === "tts_audio" && msg.audio_base64) {
-              playBase64Audio(msg.audio_base64);
-            }
           } catch (e) {
             console.warn("WS parse error:", e);
           }

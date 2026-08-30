@@ -187,6 +187,7 @@ class LlamaCppEngine:
                     messages=messages,
                     stream=True,
                     temperature=self.temperature,
+                    repeat_penalty=1.15,
                     max_tokens=self.max_tokens,
                     tools=TOOLS_SCHEMA,
                 )

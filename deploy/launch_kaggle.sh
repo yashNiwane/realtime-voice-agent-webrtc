@@ -18,13 +18,11 @@ else
     echo "⚠️ No GPU detected. Running in CPU mode with dynamic quantization."
 fi
 
-# 1. System packages for WebRTC & Audio
-echo "📦 Installing system audio codecs..."
-apt-get update -qq && apt-get install -y -qq libavdevice-dev libavfilter-dev libopus-dev libvpx-dev pkg-config wget curl > /dev/null 2>&1
+# 1. System packages (wget and curl only - do NOT install system libav to avoid PyAV wheel symbol collision)
+apt-get update -qq && apt-get install -y -qq wget curl > /dev/null 2>&1 || true
 
 # 2. Python dependencies
 echo "🐍 Installing Python dependencies..."
-pip install --quiet --upgrade pip
 pip install --quiet -r requirements.txt
 
 # 3. Download Cloudflare Tunnel if not present
@@ -41,7 +39,7 @@ rm -f /tmp/tunnel.log
 
 # Wait for tunnel URL
 TUNNEL_URL=""
-for i in {1..20}; do
+for i in {1..25}; do
     sleep 1
     if [ -f "/tmp/tunnel.log" ]; then
         TUNNEL_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' /tmp/tunnel.log | tail -n 1 || true)
@@ -61,11 +59,12 @@ else
 fi
 echo "=================================================================="
 
-# 5. Start WebRTC Server with CUDA acceleration
+# 5. Start WebRTC Server with CUDA acceleration and fault handler
 echo "🔥 Launching WebRTC Server on port 7860..."
 export HOST="0.0.0.0"
 export PORT="7860"
 export DEVICE="cuda"
 export TORCH_DTYPE="float16"
+export PYTHONFAULTHANDLER="1"
 
 python -m server.webrtc_server

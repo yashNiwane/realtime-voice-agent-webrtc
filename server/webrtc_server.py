@@ -19,10 +19,10 @@ import json
 import os
 import time
 from typing import Any, Dict, List, Optional, Set
-import av
+import torch
 import numpy as np
 import scipy.signal
-import torch
+import av
 import uvicorn
 from aiortc import (
     MediaStreamTrack,

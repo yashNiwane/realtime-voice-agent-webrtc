@@ -118,34 +118,33 @@ class Qwen3ASREngine:
         )
         t0 = time.perf_counter()
 
-        # Load base wrapper & processor
+        # Load base wrapper & processor with device mapping
+        model_kwargs = {}
+        if self.is_cuda:
+            if self.dtype_str in ("float16", "fp16", "half"):
+                model_kwargs["torch_dtype"] = torch.float16
+            elif self.dtype_str in ("bfloat16", "bf16"):
+                model_kwargs["torch_dtype"] = torch.bfloat16
+            model_kwargs["device_map"] = str(self.device)
+
         self.wrapper = Qwen3ASRModel.from_pretrained(
             self.model_path,
             max_new_tokens=self.max_new_tokens,
+            **model_kwargs,
         )
         self.model = self.wrapper.model
         self.processor = self.wrapper.processor
 
-        # Hardware optimization
-        if self.is_cuda:
-            logger.info("Moving Qwen3-ASR model to CUDA GPU...")
-            self.model = self.model.to(self.device)
-            if self.dtype_str in ("float16", "fp16", "half"):
-                self.model = self.model.half()
-                logger.info("CUDA FP16 precision enabled for ultra-fast GPU decoding.")
-            elif self.dtype_str in ("bfloat16", "bf16"):
-                self.model = self.model.to(torch.bfloat16)
-                logger.info("CUDA BF16 precision enabled.")
-        else:
-            if self.use_quantization:
-                logger.info("Applying dynamic INT8 quantization on CPU Linear layers...")
-                try:
-                    self.model = torch.ao.quantization.quantize_dynamic(
-                        self.model, {torch.nn.Linear}, dtype=torch.qint8
-                    )
-                    logger.info("CPU INT8 dynamic quantization applied successfully.")
-                except Exception as e:
-                    logger.warning(f"Failed to apply dynamic INT8 quantization: {e}. Using FP32.")
+        # Apply CPU INT8 dynamic quantization if requested on CPU
+        if not self.is_cuda and self.use_quantization:
+            logger.info("Applying dynamic INT8 quantization on CPU Linear layers...")
+            try:
+                self.model = torch.ao.quantization.quantize_dynamic(
+                    self.model, {torch.nn.Linear}, dtype=torch.qint8
+                )
+                logger.info("CPU INT8 dynamic quantization applied successfully.")
+            except Exception as e:
+                logger.warning(f"Failed to apply dynamic INT8 quantization: {e}. Using FP32.")
 
         self.model.eval()
         self.prompt = self.wrapper._build_text_prompt(context="", force_language=self.language)

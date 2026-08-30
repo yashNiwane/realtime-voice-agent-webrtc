@@ -18,12 +18,17 @@ else
     echo "⚠️ No GPU detected. Running in CPU mode with dynamic quantization."
 fi
 
-# 1. System packages (wget and curl only - do NOT install system libav to avoid PyAV wheel symbol collision)
-apt-get update -qq && apt-get install -y -qq wget curl > /dev/null 2>&1 || true
+# 1. Install system libsrtp2-dev for OpenSSL 3.0 compatibility (prevents pylibsrtp wheel segfault)
+echo "📦 Installing system libsrtp2 development headers..."
+apt-get update -qq && apt-get install -y -qq libsrtp2-dev pkg-config wget curl > /dev/null 2>&1 || true
 
-# 2. Python dependencies
-echo "🐍 Installing Python dependencies..."
+# 2. Python dependencies (force compile pylibsrtp from source against system libsrtp2)
+echo "🐍 Installing Python dependencies with native OpenSSL 3 bindings..."
+pip install --quiet --no-binary pylibsrtp --no-cache-dir pylibsrtp
 pip install --quiet -r requirements.txt
+
+# Verify aiortc / pylibsrtp import
+python -c "import pylibsrtp, aiortc; print('✅ aiortc & pylibsrtp verified successfully on Python runtime!')"
 
 # 3. Download Cloudflare Tunnel if not present
 if [ ! -f "cloudflared" ]; then
@@ -59,7 +64,7 @@ else
 fi
 echo "=================================================================="
 
-# 5. Start WebRTC Server with CUDA acceleration and fault handler
+# 5. Start WebRTC Server with CUDA acceleration
 echo "🔥 Launching WebRTC Server on port 7860..."
 export HOST="0.0.0.0"
 export PORT="7860"

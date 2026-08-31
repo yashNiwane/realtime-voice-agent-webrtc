@@ -1,0 +1,22 @@
+"""
+Root agents.prompts re-export.
+"""
+from server.agents.prompts import (
+    ANALYST_SYSTEM_PROMPT,
+    COACH_SYSTEM_PROMPT,
+    TELECALLER_SYSTEM_PROMPT,
+    AGENT_NAME,
+    COMPANY_NAME,
+    PRODUCT_NAME,
+    CALLER_LANGUAGE_HINT,
+)
+
+__all__ = [
+    "TELECALLER_SYSTEM_PROMPT",
+    "ANALYST_SYSTEM_PROMPT",
+    "COACH_SYSTEM_PROMPT",
+    "AGENT_NAME",
+    "COMPANY_NAME",
+    "PRODUCT_NAME",
+    "CALLER_LANGUAGE_HINT",
+]

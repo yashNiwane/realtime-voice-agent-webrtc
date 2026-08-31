@@ -100,12 +100,12 @@ class ASRConfig(BaseModel):
 class VADConfig(BaseModel):
     """Configuration for Silero Neural Voice Activity Detector."""
     confidence: float = Field(
-        default_factory=lambda: float(os.getenv("VAD_CONFIDENCE", "0.45")),
+        default_factory=lambda: float(os.getenv("VAD_CONFIDENCE", "0.55")),
         description="Speech probability threshold (0.0 - 1.0) to qualify as speech",
     )
     start_secs: float = Field(
-        default_factory=lambda: float(os.getenv("VAD_START_SECS", "0.15")),
-        description="Minimum duration of continuous speech to trigger speech start",
+        default_factory=lambda: float(os.getenv("VAD_START_SECS", "0.22")),
+        description="Minimum duration of continuous speech to trigger speech start (filters ambient pops/clicks)",
     )
     stop_secs: float = Field(
         default_factory=lambda: float(os.getenv("VAD_STOP_SECS", "0.45")),
@@ -118,7 +118,7 @@ class VADConfig(BaseModel):
         description="Duration of pre-speech audio buffer in ms to prevent clipping initial consonants",
     )
     min_speech_duration_ms: int = Field(
-        default_factory=lambda: int(os.getenv("VAD_MIN_SPEECH_MS", "250")),
+        default_factory=lambda: int(os.getenv("VAD_MIN_SPEECH_MS", "300")),
         description="Minimum valid utterance length to filter out transient pops/clicks",
     )
 
@@ -134,8 +134,8 @@ class LLMConfig(BaseModel):
         description="HuggingFace GGUF repository for local LLM",
     )
     filename: str = Field(
-        default_factory=lambda: os.getenv("LLM_GGUF_FILENAME", "gemma-4-E2B-it-Q4_K_M.gguf"),
-        description="GGUF model filename to download and load",
+        default_factory=lambda: os.getenv("LLM_GGUF_FILENAME", "gemma-4-E2B-it-Q8_0.gguf"),
+        description="GGUF model filename to download and load (INT8 quantized)",
     )
     model_path: Optional[str] = Field(
         default_factory=lambda: os.getenv("LLM_MODEL_PATH", None),
@@ -154,7 +154,7 @@ class LLMConfig(BaseModel):
         description="Ollama API base URL endpoint (used if engine_type='ollama')",
     )
     model: str = Field(
-        default_factory=lambda: os.getenv("LLM_MODEL", "gemma-4-e2b-it"),
+        default_factory=lambda: os.getenv("LLM_MODEL", "gemma-4-e2b-it-int8"),
         description="Model name identifier",
     )
     enable_thinking: bool = Field(
@@ -194,9 +194,10 @@ class LLMConfig(BaseModel):
 class TTSConfig(BaseModel):
     """Configuration for Multi-Engine Text-to-Speech synthesizer."""
     default_engine: str = Field(
-        default_factory=lambda: os.getenv("TTS_ENGINE", "kokoro").lower(),
-        description="Default TTS engine: 'kokoro' (realtime GPU 82M), 'edge' (HD neural cloud), 'vits' (local offline), 'cartesia'",
+        default_factory=lambda: os.getenv("TTS_ENGINE", "edge").lower(),
+        description="Default TTS engine: 'edge' (HD neural female cloud), 'kokoro' (realtime GPU 82M), 'vits' (local offline), 'cartesia'",
     )
+
     sample_rate: int = Field(
         default_factory=lambda: int(os.getenv("TTS_SAMPLE_RATE", "48000")),
         description="Output audio sample rate for WebRTC stream (48000 Hz standard)",

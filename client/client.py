@@ -65,7 +65,7 @@ class WebRTCVoiceClient:
         output_device: Optional[int] = None,
         sample_rate: int = 16000,
         language: str = "Hindi",
-        tts_engine: str = "vits",
+        tts_engine: str = "edge",
         gain: float = 1.0,
         volume: float = 1.0,
         no_audio: bool = False,
@@ -466,9 +466,9 @@ def parse_args():
     parser.add_argument(
         "--tts-engine",
         "-t",
-        default="vits",
-        choices=["vits", "cartesia", "edge"],
-        help="Preferred TTS synthesis engine (vits, cartesia, edge)",
+        default="edge",
+        choices=["edge", "vits", "cartesia", "kokoro"],
+        help="Preferred TTS synthesis engine (edge, vits, cartesia, kokoro)",
     )
     parser.add_argument(
         "--gain",

@@ -184,12 +184,22 @@ class PeerSession:
         self.preferred_language: str = config.asr.language
         self.preferred_tts_engine: str = config.tts.default_engine
         self.incoming_audio_buffer: bytearray = bytearray()
+        self.current_pipeline_task: Optional[asyncio.Task] = None
 
         async def _telemetry_cb(event_data):
             self.send_telemetry(event_data)
 
         async def _audio_output_cb(pcm_bytes, pcm16_arr, engine_name, latency_ms):
             self.server_track.add_pcm16_audio(pcm16_arr)
+            import base64
+            # Broadcast tts_audio over DataChannel as universal high-reliability fallback for browser Web Audio playback
+            self.send_telemetry({
+                "type": "tts_audio",
+                "audio_base64": base64.b64encode(pcm_bytes).decode("utf-8"),
+                "latency_ms": round(latency_ms, 1),
+                "engine": engine_name,
+                "sample_rate": 48000,
+            })
 
         self.voice_pipeline = RealtimeVoiceSession(
             asr_engine=asr_engine,
@@ -350,13 +360,17 @@ async def handle_incoming_audio(
                     "is_speech": vad_res.is_speech,
                 })
 
-                # Handle Barge-In / Interruption on SPEECH_START
+                # Handle Barge-In / Interruption on SPEECH_START only when assistant is actively generating or speaking
                 if vad_res.event == "SPEECH_START":
-                    session.server_track.flush()
-                    if session.current_pipeline_task and not session.current_pipeline_task.done():
-                        session.current_pipeline_task.cancel()
-                    session.send_telemetry({"type": "interrupt", "timestamp": time.time()})
-                    logger.info("🛑 [BARGE-IN] User started speaking; flushed assistant playback.")
+                    is_assistant_active = session.server_track._is_speaking or (
+                        session.current_pipeline_task and not session.current_pipeline_task.done()
+                    )
+                    if is_assistant_active:
+                        session.server_track.flush()
+                        if session.current_pipeline_task and not session.current_pipeline_task.done():
+                            session.current_pipeline_task.cancel()
+                        session.send_telemetry({"type": "interrupt", "timestamp": time.time()})
+                        logger.info("🛑 [BARGE-IN] User confirmed speech onset; flushed assistant playback.")
 
                 # Handle Turn Completion on SPEECH_END
                 elif vad_res.event == "SPEECH_END" and vad_res.audio_utterance is not None:
@@ -539,8 +553,10 @@ async def websocket_audio_endpoint(websocket: WebSocket):
                     })
 
                     if vad_res.event == "SPEECH_START":
-                        ws_pipeline.interrupt()
-                        await websocket.send_json({"type": "interrupt", "timestamp": time.time()})
+                        if ws_pipeline._active_turn_task and not ws_pipeline._active_turn_task.done():
+                            ws_pipeline.interrupt()
+                            await websocket.send_json({"type": "interrupt", "timestamp": time.time()})
+                            logger.info("🛑 [BARGE-IN] User confirmed speech onset; interrupted active WebSocket turn.")
 
                     elif vad_res.event == "SPEECH_END" and vad_res.audio_utterance is not None:
                         utterance = vad_res.audio_utterance

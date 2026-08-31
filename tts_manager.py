@@ -75,9 +75,29 @@ def synthesize_vits_hindi(text: str, target_sr: int = 16000) -> Tuple[bytes, flo
     return audio_bytes, lat_ms
 
 
+def clean_tts_text(text: str) -> str:
+    """Sanitize text for TTS synthesis."""
+    if not text:
+        return ""
+    import re
+    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = re.sub(r"<thought>.*?</thought>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = re.sub(r"```.*?```", "", cleaned, flags=re.DOTALL)
+    cleaned = re.sub(r"`.*?`", "", cleaned)
+    cleaned = re.sub(r"\*\*([^*]+)\*\*", r"\1", cleaned)
+    cleaned = re.sub(r"\*([^*]+)\*", r"\1", cleaned)
+    cleaned = re.sub(r"__([^_]+)__", r"\1", cleaned)
+    cleaned = re.sub(r"_([^_]+)_", r"\1", cleaned)
+    cleaned = re.sub(r"^#+\s*", "", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"^[-*•]\s*", "", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"[^\w\s.,!?;:।'\-—%₹$€]", " ", cleaned, flags=re.UNICODE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
 _EDGE_VOICES = {
     "hindi": "hi-IN-SwaraNeural",
-    "english": "en-US-JennyNeural",
+    "english": "en-IN-NeerjaNeural",
     "chinese": "zh-CN-XiaoxiaoNeural",
     "spanish": "es-ES-ElviraNeural",
     "french": "fr-FR-DeniseNeural",
@@ -95,23 +115,41 @@ async def synthesize_speech(
 ) -> Tuple[bytes, float, str]:
     """
     Synthesize audio for input text across supported engines:
+    - 'edge': Microsoft Edge Neural Female Voice (hi-IN-SwaraNeural / en-IN-NeerjaNeural)
     - 'vits': Local offline VITS neural model for Hindi
     - 'cartesia': Cartesia Sonic-3 cloud API
-    - 'edge': Microsoft Edge Neural TTS
-    - 'auto': VITS for Hindi / local, or Cartesia/Edge with automatic failover
+    - 'auto': Edge-TTS / Cartesia with automatic failover
     """
-    if not text.strip():
+    clean_text = clean_tts_text(text)
+    if not clean_text:
         return b"", 0.0, "none"
 
-    engine_pref = (preferred_engine or os.getenv("TTS_ENGINE", "vits")).lower().strip()
+    engine_pref = (preferred_engine or os.getenv("TTS_ENGINE", "edge")).lower().strip()
     lang_key = (language or "Hindi").lower().strip()
 
-    # 1. Local VITS Engine for Hindi
-    if engine_pref in ("vits", "local_vits") or (engine_pref == "auto" and "hi" in lang_key):
+    # 1. High Definition Neural Edge-TTS Female Voice
+    if engine_pref in ("edge", "edge_tts", "auto", "default"):
+        try:
+            t_fb = time.perf_counter()
+            voice_name = _EDGE_VOICES.get(lang_key, "hi-IN-SwaraNeural" if "hi" in lang_key else "en-IN-NeerjaNeural")
+            communicate = edge_tts.Communicate(clean_text, voice=voice_name)
+            audio_buffer = bytearray()
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio_buffer.extend(chunk["data"])
+
+            lat_ms = (time.perf_counter() - t_fb) * 1000
+            logger.info(f"Edge-TTS synthesized ({voice_name}) in {lat_ms:.1f}ms")
+            return bytes(audio_buffer), lat_ms, f"Edge-TTS Female ({voice_name})"
+        except Exception as e:
+            logger.warning(f"Edge-TTS failed: {e}. Falling back...")
+
+    # 2. Local VITS Engine for Devanagari Hindi
+    if engine_pref in ("vits", "local_vits"):
         try:
             loop = asyncio.get_running_loop()
             audio_bytes, lat_ms = await loop.run_in_executor(
-                None, synthesize_vits_hindi, text, sample_rate
+                None, synthesize_vits_hindi, clean_text, sample_rate
             )
             if audio_bytes:
                 logger.info(f"VITS Local Hindi TTS synthesized in {lat_ms:.1f}ms")
@@ -119,7 +157,7 @@ async def synthesize_speech(
         except Exception as e:
             logger.warning(f"VITS synthesis error: {e}. Falling back to Neural Edge-TTS...")
 
-    # 2. Cartesia TTS (if preferred and configured)
+    # 3. Cartesia TTS (if preferred and configured)
     if engine_pref == "cartesia" and config.tts.api_key:
         try:
             t0 = time.perf_counter()
@@ -130,7 +168,7 @@ async def synthesize_speech(
             }
             cartesia_payload = {
                 "model_id": config.tts.model,
-                "transcript": text,
+                "transcript": clean_text,
                 "voice": {"mode": "id", "id": config.tts.voice_id},
                 "output_format": {
                     "container": "wav",
@@ -153,23 +191,24 @@ async def synthesize_speech(
                     lat_ms = (time.perf_counter() - t0) * 1000
                     return resp.content, lat_ms, "Cartesia (Sonic-3)"
                 elif resp.status_code == 402:
-                    logger.warning("Cartesia quota exceeded. Falling back to VITS/Edge-TTS...")
+                    logger.warning("Cartesia quota exceeded. Falling back to Edge-TTS...")
         except Exception as e:
             logger.warning(f"Cartesia error: {e}")
 
-    # 3. Neural Edge-TTS Fallback
+    # Fallback to Edge-TTS
     try:
         t_fb = time.perf_counter()
-        voice_name = _EDGE_VOICES.get(lang_key, "hi-IN-SwaraNeural" if "hi" in lang_key else "en-US-JennyNeural")
-        communicate = edge_tts.Communicate(text, voice=voice_name)
+        voice_name = _EDGE_VOICES.get(lang_key, "hi-IN-SwaraNeural" if "hi" in lang_key else "en-IN-NeerjaNeural")
+        communicate = edge_tts.Communicate(clean_text, voice=voice_name)
         audio_buffer = bytearray()
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
                 audio_buffer.extend(chunk["data"])
 
         lat_ms = (time.perf_counter() - t_fb) * 1000
-        logger.info(f"Edge-TTS synthesized ({voice_name}) in {lat_ms:.1f}ms")
+        logger.info(f"Edge-TTS fallback synthesized ({voice_name}) in {lat_ms:.1f}ms")
         return bytes(audio_buffer), lat_ms, f"Edge-TTS ({voice_name})"
     except Exception as e:
         logger.error(f"Fallback TTS failed: {e}")
         return b"", 0.0, "error"
+

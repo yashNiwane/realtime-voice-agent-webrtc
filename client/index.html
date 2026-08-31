@@ -1038,7 +1038,7 @@
       <div class="telemetry-card">
         <div class="card-header">
           <span class="card-title"><span>🧠</span> Gemma 4 TTFT</span>
-          <span class="card-badge">gemma4:31b</span>
+          <span class="card-badge">Gemma 4 INT8</span>
         </div>
         <div class="metric-value-row">
           <span class="metric-value" id="llmTtftVal">--</span>
@@ -1054,7 +1054,7 @@
       <div class="telemetry-card">
         <div class="card-header">
           <span class="card-title"><span>🔊</span> TTS Latency</span>
-          <span class="card-badge" id="ttsEngineBadge">VITS Local</span>
+          <span class="card-badge" id="ttsEngineBadge">EDGE FEMALE</span>
         </div>
         <div class="metric-value-row">
           <span class="metric-value" id="ttsLatencyVal">--</span>
@@ -1062,7 +1062,7 @@
         </div>
         <div class="vad-labels">
           <span>Speech Synthesis</span>
-          <span id="ttsSrText">16kHz Audio</span>
+          <span id="ttsSrText">48kHz HD Audio</span>
         </div>
       </div>
 
@@ -1123,27 +1123,19 @@
         <div class="setting-description">Select primary voice synthesis provider.</div>
         
         <div class="engine-options">
-          <label class="engine-card selected" id="cardTtsKokoro">
-            <input type="radio" name="tts_engine" value="kokoro" checked>
+          <label class="engine-card selected" id="cardTtsEdge">
+            <input type="radio" name="tts_engine" value="edge" checked>
+            <div class="engine-info">
+              <h4>🌐 Edge-TTS Neural (Female Voice)</h4>
+              <p>Microsoft Swara (Hindi) &amp; Neerja (English) studio HD voices</p>
+            </div>
+          </label>
+
+          <label class="engine-card" id="cardTtsKokoro">
+            <input type="radio" name="tts_engine" value="kokoro">
             <div class="engine-info">
               <h4>🔥 Kokoro-82M (Realtime GPU)</h4>
-              <p>24kHz studio natural voice &lt;30ms latency</p>
-            </div>
-          </label>
-
-          <label class="engine-card" id="cardTtsEdge">
-            <input type="radio" name="tts_engine" value="edge">
-            <div class="engine-info">
-              <h4>🌐 Edge-TTS Neural</h4>
-              <p>Microsoft Swara &amp; Neerja studio voices</p>
-            </div>
-          </label>
-
-          <label class="engine-card" id="cardTtsVits">
-            <input type="radio" name="tts_engine" value="vits">
-            <div class="engine-info">
-              <h4>🏠 VITS Local Offline</h4>
-              <p>Meta MMS Hindi offline synthesis</p>
+              <p>24kHz studio female voice (hf_alpha / af_heart)</p>
             </div>
           </label>
 
@@ -1152,6 +1144,14 @@
             <div class="engine-info">
               <h4>⚡ Cartesia Sonic-3</h4>
               <p>Ultra-low latency streaming cloud voice</p>
+            </div>
+          </label>
+
+          <label class="engine-card" id="cardTtsVits">
+            <input type="radio" name="tts_engine" value="vits">
+            <div class="engine-info">
+              <h4>🏠 VITS Local Offline</h4>
+              <p>Meta MMS Hindi offline synthesis</p>
             </div>
           </label>
         </div>
@@ -1266,7 +1266,7 @@
       // Current Settings
       let currentSettings = {
         language: 'Hindi',
-        tts_engine: 'kokoro',
+        tts_engine: 'edge',
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
@@ -1326,7 +1326,7 @@
 
       // Apply & Sync Settings
       btnApplySettings.onclick = () => {
-        const selectedTts = document.querySelector('input[name="tts_engine"]:checked')?.value || 'vits';
+        const selectedTts = document.querySelector('input[name="tts_engine"]:checked')?.value || 'edge';
         currentSettings.language = selectLanguage.value;
         currentSettings.tts_engine = selectedTts;
         currentSettings.echoCancellation = chkAec.checked;
@@ -1516,65 +1516,71 @@
 
       let wsChannel = null;
       let scriptProcessor = null;
-      const audioQueue = [];
-      let isPlayingAudio = false;
+      let playbackAudioCtx = null;
+      let nextAudioStartTime = 0;
+      const activeAudioSources = [];
 
-      function createAudioBufferFromPCM16(arrayBuffer, sampleRate = 48000) {
-        const int16Array = new Int16Array(arrayBuffer);
-        const float32Array = new Float32Array(int16Array.length);
-        for (let i = 0; i < int16Array.length; i++) {
-          float32Array[i] = int16Array[i] / 32768.0;
+      function getPlaybackContext(sampleRate = 48000) {
+        if (!playbackAudioCtx || playbackAudioCtx.state === 'closed') {
+          playbackAudioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: sampleRate });
         }
-        if (!audioCtx || audioCtx.state === 'closed') {
-          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (playbackAudioCtx.state === 'suspended') {
+          playbackAudioCtx.resume();
         }
-        const buffer = audioCtx.createBuffer(1, float32Array.length, sampleRate);
-        buffer.copyToChannel(float32Array, 0);
-        return buffer;
+        return playbackAudioCtx;
+      }
+
+      function stopAndClearAudioPlayback() {
+        while (activeAudioSources.length > 0) {
+          const src = activeAudioSources.pop();
+          try {
+            src.stop();
+            src.disconnect();
+          } catch (e) {}
+        }
+        if (playbackAudioCtx) {
+          nextAudioStartTime = playbackAudioCtx.currentTime;
+        } else {
+          nextAudioStartTime = 0;
+        }
       }
 
       function playBase64Audio(base64Str, sampleRate = 48000) {
         try {
           const binaryString = window.atob(base64Str);
-          const len = binaryString.length;
+          const len = binaryString.length - (binaryString.length % 2);
+          if (len <= 0) return;
           const bytes = new Uint8Array(len);
           for (let i = 0; i < len; i++) {
             bytes[i] = binaryString.charCodeAt(i);
           }
-          const audioBuffer = createAudioBufferFromPCM16(bytes.buffer, sampleRate);
-          audioQueue.push(audioBuffer);
-          if (!isPlayingAudio) {
-            playNextAudio();
+          const dataView = new DataView(bytes.buffer, bytes.byteOffset, len);
+          const numSamples = len / 2;
+          const float32 = new Float32Array(numSamples);
+          for (let i = 0; i < numSamples; i++) {
+            float32[i] = dataView.getInt16(i * 2, true) / 32768.0;
           }
-        } catch (e) {
-          console.error("Failed to parse base64 PCM audio:", e);
-        }
-      }
 
-      async function playNextAudio() {
-        if (audioQueue.length === 0) {
-          isPlayingAudio = false;
-          return;
-        }
-        isPlayingAudio = true;
-        const audioBuffer = audioQueue.shift();
-        try {
-          if (!audioCtx || audioCtx.state === 'closed') {
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-          }
-          if (audioCtx.state === 'suspended') {
-            await audioCtx.resume();
-          }
-          const playSource = audioCtx.createBufferSource();
-          playSource.buffer = audioBuffer;
-          playSource.connect(audioCtx.destination);
-          playSource.onended = () => {
-            playNextAudio();
+          const ctx = getPlaybackContext(sampleRate);
+          const buffer = ctx.createBuffer(1, numSamples, sampleRate);
+          buffer.copyToChannel(float32, 0);
+
+          const source = ctx.createBufferSource();
+          source.buffer = buffer;
+          source.connect(ctx.destination);
+
+          const now = ctx.currentTime;
+          const startTime = Math.max(now + 0.015, nextAudioStartTime);
+          source.start(startTime);
+          nextAudioStartTime = startTime + buffer.duration;
+
+          activeAudioSources.push(source);
+          source.onended = () => {
+            const idx = activeAudioSources.indexOf(source);
+            if (idx > -1) activeAudioSources.splice(idx, 1);
           };
-          playSource.start(0);
-        } catch (err) {
-          console.error("Audio playback error:", err);
-          playNextAudio();
+        } catch (e) {
+          console.error("TTS audio decode/playback error:", e);
         }
       }
 
@@ -1648,8 +1654,11 @@
           }
           wsChannel.send(pcm16.buffer);
         };
+        const silentGain = audioCtx.createGain();
+        silentGain.gain.value = 0.0;
         micSource.connect(scriptProcessor);
-        scriptProcessor.connect(audioCtx.destination);
+        scriptProcessor.connect(silentGain);
+        silentGain.connect(audioCtx.destination);
       }
 
       // WebRTC Offer / Answer Handlers
@@ -1661,6 +1670,15 @@
         btnCall.disabled = true;
 
         try {
+          // Unlock Web Audio & Media Elements on user gesture
+          const pCtx = getPlaybackContext(48000);
+          if (pCtx.state === 'suspended') {
+            await pCtx.resume();
+          }
+          remoteAudio.muted = false;
+          remoteAudio.volume = 1.0;
+          remoteAudio.play().catch(() => {});
+
           // 1. Get User Media with AEC, Noise Suppression, and AGC
           const audioConstraints = {
             echoCancellation: currentSettings.echoCancellation,
@@ -1705,7 +1723,7 @@
             } else {
               remoteAudio.srcObject = new MediaStream([event.track]);
             }
-            remoteAudio.play().catch(err => console.warn('Autoplay prevented:', err));
+            remoteAudio.play().catch(err => console.warn('Autoplay note:', err));
           };
 
           // 6. Handle Connection States
@@ -1816,8 +1834,7 @@
           peerConnection = null;
         }
 
-        audioQueue.length = 0;
-        isPlayingAudio = false;
+        stopAndClearAudioPlayback();
 
         setStatus('', 'Disconnected');
         setAgentState('', 'IDLE');
@@ -1923,8 +1940,7 @@
           }
 
           case 'interrupt': {
-            audioQueue.length = 0;
-            isPlayingAudio = false;
+            stopAndClearAudioPlayback();
             finalizeAssistantMessage();
             setAgentState('listening', 'USER SPEAKING');
             break;

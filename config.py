@@ -56,7 +56,7 @@ class ASRConfig:
 @dataclass
 class LLMConfig:
     base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-    model: str = os.getenv("OLLAMA_MODEL", "gemma4:31b-cloud")
+    model: str = os.getenv("OLLAMA_MODEL", "gemma4:int8")
     enable_thinking: bool = os.getenv("OLLAMA_THINKING", "false").lower() in ("true", "1", "yes")
     system_prompt: str = os.getenv(
         "LLM_SYSTEM_PROMPT",

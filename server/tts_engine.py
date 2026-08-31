@@ -14,6 +14,7 @@ for seamless, glitch-free WebRTC audio playback.
 import asyncio
 import io
 import os
+import re
 import time
 from typing import Any, Dict, Optional, Tuple
 import edge_tts
@@ -26,6 +27,29 @@ from loguru import logger
 from transformers import AutoTokenizer, VitsModel
 
 from server.config import config, TTSConfig
+
+
+def clean_tts_text(text: str) -> str:
+    """Sanitize LLM output text by stripping markdown, think tags, and symbols for natural speech synthesis."""
+    if not text:
+        return ""
+    # Strip thinking / thought tags if any remain
+    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = re.sub(r"<thought>.*?</thought>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+    # Strip markdown bold, italics, headers, code blocks
+    cleaned = re.sub(r"```.*?```", "", cleaned, flags=re.DOTALL)
+    cleaned = re.sub(r"`.*?`", "", cleaned)
+    cleaned = re.sub(r"\*\*([^*]+)\*\*", r"\1", cleaned)
+    cleaned = re.sub(r"\*([^*]+)\*", r"\1", cleaned)
+    cleaned = re.sub(r"__([^_]+)__", r"\1", cleaned)
+    cleaned = re.sub(r"_([^_]+)_", r"\1", cleaned)
+    cleaned = re.sub(r"^#+\s*", "", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"^[-*•]\s*", "", cleaned, flags=re.MULTILINE)
+    # Strip emojis and odd bracket characters
+    cleaned = re.sub(r"[^\w\s.,!?;:।'\-—%₹$€]", " ", cleaned, flags=re.UNICODE)
+    # Normalize whitespace
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
 
 
 def resample_to_48k_pcm16(
@@ -116,7 +140,9 @@ class MultiEngineTTSManager:
     ) -> Tuple[bytes, np.ndarray, float, str]:
         """Synthesize ultra-fast neural audio with Kokoro-82M and resample to 48kHz PCM."""
         t0 = time.perf_counter()
-        clean = text.strip()
+        clean = clean_tts_text(text)
+        if not clean:
+            return b"", np.zeros(0, dtype=np.int16), 0.0, "none"
 
         # Detect script: count Devanagari vs Latin characters
         num_devanagari = len(re.findall(r"[\u0900-\u097F]", clean))
@@ -178,9 +204,13 @@ class MultiEngineTTSManager:
 
     def _synthesize_vits_local(self, text: str) -> Tuple[bytes, np.ndarray, float]:
         t0 = time.perf_counter()
+        clean = clean_tts_text(text)
+        if not clean:
+            return b"", np.zeros(0, dtype=np.int16), 0.0
+
         model, tokenizer = self._get_vits_engine()
 
-        inputs = tokenizer(text, return_tensors="pt").to(self._vits_device)
+        inputs = tokenizer(clean, return_tensors="pt").to(self._vits_device)
         with torch.no_grad():
             outputs = model(**inputs)
             waveform = outputs.waveform[0].cpu().numpy()
@@ -194,16 +224,20 @@ class MultiEngineTTSManager:
     async def _synthesize_edge_tts(
         self, text: str, language: str
     ) -> Tuple[bytes, np.ndarray, float, str]:
+        """Synthesize high-fidelity Indian female voice using Microsoft Edge Neural TTS."""
         t0 = time.perf_counter()
-        clean = text.strip()
+        clean = clean_tts_text(text)
+        if not clean:
+            return b"", np.zeros(0, dtype=np.int16), 0.0, "none"
 
         num_devanagari = len(re.findall(r"[\u0900-\u097F]", clean))
         num_latin = len(re.findall(r"[a-zA-Z]", clean))
 
-        if num_devanagari > num_latin:
-            voice = self.cfg.edge_voice_hi
+        # Select natural Indian female voice based on language and script
+        if num_devanagari > num_latin or (language and "hi" in language.lower()):
+            voice = self.cfg.edge_voice_hi  # hi-IN-SwaraNeural (Female)
         else:
-            voice = self.cfg.edge_voice_en
+            voice = self.cfg.edge_voice_en  # en-IN-NeerjaNeural (Female)
 
         communicate = edge_tts.Communicate(clean, voice=voice)
         audio_buffer = bytearray()
@@ -219,12 +253,16 @@ class MultiEngineTTSManager:
         pcm_bytes, pcm_int16 = resample_to_48k_pcm16(audio_data, source_sr)
         latency_ms = (time.perf_counter() - t0) * 1000
 
-        return pcm_bytes, pcm_int16, latency_ms, f"Edge-TTS ({voice})"
+        return pcm_bytes, pcm_int16, latency_ms, f"Edge-TTS Female ({voice.split('-')[-1].replace('Neural', '')})"
 
     async def _synthesize_cartesia(
         self, text: str, language: str
     ) -> Tuple[bytes, np.ndarray, float, str]:
         t0 = time.perf_counter()
+        clean = clean_tts_text(text)
+        if not clean:
+            return b"", np.zeros(0, dtype=np.int16), 0.0, "none"
+
         if not self.cfg.cartesia_api_key:
             raise ValueError("Cartesia API key not configured")
 
@@ -238,7 +276,7 @@ class MultiEngineTTSManager:
 
         payload = {
             "model_id": self.cfg.cartesia_model,
-            "transcript": text,
+            "transcript": clean,
             "voice": {"mode": "id", "id": self.cfg.cartesia_voice_id},
             "output_format": {
                 "container": "wav",
@@ -270,7 +308,7 @@ class MultiEngineTTSManager:
         language: str = "Hindi",
         preferred_engine: Optional[str] = None,
     ) -> Tuple[bytes, np.ndarray, float, str]:
-        clean_text = text.strip()
+        clean_text = clean_tts_text(text)
         if not clean_text:
             empty_arr = np.zeros(0, dtype=np.int16)
             return b"", empty_arr, 0.0, "none"
@@ -279,8 +317,19 @@ class MultiEngineTTSManager:
         lang_lower = language.lower().strip()
         is_hindi = "hi" in lang_lower or "hindi" in lang_lower
 
-        # 1. Attempt Kokoro-82M (Default Fast Neural GPU Engine)
-        if engine in ("kokoro", "kokoro-82m", "auto"):
+        # 1. Edge-TTS Neural Female Voice (High Quality HD Studio Voice - Primary/Fast)
+        if engine in ("edge", "edge_tts", "auto", "default"):
+            try:
+                pcm_bytes, pcm_int16, lat_ms, engine_name = await self._synthesize_edge_tts(
+                    clean_text, language
+                )
+                logger.info(f"🔊 Edge-TTS generated ({engine_name}) in {lat_ms:.1f}ms")
+                return pcm_bytes, pcm_int16, lat_ms, engine_name
+            except Exception as e:
+                logger.warning(f"Edge-TTS failed: {e}. Attempting Kokoro...")
+
+        # 2. Kokoro-82M (Realtime Fast GPU Engine)
+        if engine in ("kokoro", "kokoro-82m") or engine in ("edge", "edge_tts", "auto"):
             try:
                 pcm_bytes, pcm_int16, lat_ms, engine_name = await self._synthesize_kokoro(
                     clean_text, language
@@ -290,31 +339,18 @@ class MultiEngineTTSManager:
             except Exception as e:
                 logger.warning(f"Kokoro-82M failed: {e}. Falling back to Edge-TTS...")
 
-        # 2. Attempt Edge-TTS Neural
-        if engine in ("edge", "edge_tts") or engine in ("kokoro", "kokoro-82m", "auto"):
+        # If Kokoro was primary and failed, try Edge-TTS
+        if engine in ("kokoro", "kokoro-82m"):
             try:
                 pcm_bytes, pcm_int16, lat_ms, engine_name = await self._synthesize_edge_tts(
                     clean_text, language
                 )
-                logger.info(f"🔊 Edge-TTS generated ({engine_name}) in {lat_ms:.1f}ms")
+                logger.info(f"🔊 Edge-TTS fallback generated ({engine_name}) in {lat_ms:.1f}ms")
                 return pcm_bytes, pcm_int16, lat_ms, engine_name
             except Exception as e:
-                logger.warning(f"Edge-TTS failed: {e}. Falling back to VITS...")
+                logger.warning(f"Edge-TTS fallback also failed: {e}")
 
-        # 3. Attempt VITS Local Offline Engine
-        if engine in ("vits", "local_vits") or is_hindi:
-            try:
-                loop = asyncio.get_running_loop()
-                async with self._vits_lock:
-                    pcm_bytes, pcm_int16, lat_ms = await loop.run_in_executor(
-                        None, self._synthesize_vits_local, clean_text
-                    )
-                logger.info(f"🔊 VITS Local Offline TTS generated in {lat_ms:.1f}ms")
-                return pcm_bytes, pcm_int16, lat_ms, "VITS Neural (Offline Local)"
-            except Exception as e:
-                logger.warning(f"VITS Local TTS failed: {e}...")
-
-        # 4. Attempt Cartesia Sonic-3 Engine
+        # 3. Cartesia Sonic-3 Engine
         if engine == "cartesia":
             try:
                 pcm_bytes, pcm_int16, lat_ms, engine_name = await self._synthesize_cartesia(
@@ -323,7 +359,32 @@ class MultiEngineTTSManager:
                 logger.info(f"🔊 Cartesia Sonic-3 TTS generated in {lat_ms:.1f}ms")
                 return pcm_bytes, pcm_int16, lat_ms, engine_name
             except Exception as e:
-                logger.error(f"Cartesia Sonic-3 failed: {e}")
+                logger.warning(f"Cartesia Sonic-3 failed: {e}. Falling back to Edge-TTS...")
+                try:
+                    return await self._synthesize_edge_tts(clean_text, language)
+                except Exception:
+                    pass
+
+        # 4. VITS Local Offline Engine (Devanagari Hindi only)
+        if engine in ("vits", "local_vits"):
+            num_dev = len(re.findall(r"[\u0900-\u097F]", clean_text))
+            if num_dev > 0:
+                try:
+                    loop = asyncio.get_running_loop()
+                    async with self._vits_lock:
+                        pcm_bytes, pcm_int16, lat_ms = await loop.run_in_executor(
+                            None, self._synthesize_vits_local, clean_text
+                        )
+                    logger.info(f"🔊 VITS Local Offline TTS generated in {lat_ms:.1f}ms")
+                    return pcm_bytes, pcm_int16, lat_ms, "VITS Neural (Offline Local)"
+                except Exception as e:
+                    logger.warning(f"VITS Local TTS failed: {e}. Falling back to Edge-TTS...")
+            # If text has Latin characters or VITS failed, use Edge-TTS
+            try:
+                return await self._synthesize_edge_tts(clean_text, language)
+            except Exception as e:
+                logger.error(f"All TTS synthesis options failed: {e}")
 
         empty_arr = np.zeros(0, dtype=np.int16)
         return b"", empty_arr, 0.0, "error"
+

@@ -108,6 +108,46 @@ async def save_user_info(name: str, email: str = "", phone: str = "", notes: str
     return f"Details recorded successfully for {clean_name}."
 
 
+# Global lead profile for current call turn
+CURRENT_LEAD_PROFILE: Dict[str, Any] = {}
+
+
+async def update_lead_info(field: str, value: str) -> str:
+    """Record customer details captured during conversation."""
+    clean_field = field.strip().lower().replace(" ", "_")
+    clean_value = str(value).strip()
+    async with _LOCK:
+        CURRENT_LEAD_PROFILE[clean_field] = clean_value
+    logger.info(f"📋 [LEAD FIELD RECORDED] {clean_field} = '{clean_value}'")
+    return f"Recorded {clean_field}: {clean_value}"
+
+
+async def get_lead_profile() -> str:
+    """Retrieve full customer profile captured so far."""
+    async with _LOCK:
+        profile = dict(CURRENT_LEAD_PROFILE)
+    return json.dumps(profile, ensure_ascii=False)
+
+
+async def analyze_conversation() -> str:
+    """Trigger background lead analyst to assess customer interest and missing details."""
+    from server.agents.analyst import analyze_lead_async
+    res = await analyze_lead_async([], CURRENT_LEAD_PROFILE)
+    return json.dumps(res, ensure_ascii=False)
+
+
+async def ask_sales_coach(situation: str) -> str:
+    """Query background sales coach agent for tactical whisper objection handling advice."""
+    from server.agents.analyst import get_sales_coaching_async
+    return await get_sales_coaching_async(situation, [], CURRENT_LEAD_PROFILE)
+
+
+async def end_call(reason: str = "call completed") -> str:
+    """Politely mark call as wrapped up."""
+    logger.info(f"📞 [CALL ENDED] Reason: {reason}")
+    return f"Call ended successfully ({reason})."
+
+
 async def get_current_time(timezone: str = "local") -> str:
     now = datetime.now()
     return f"The current date and time is {now.strftime('%A, %B %d, %Y at %I:%M %p')} (IST)."
@@ -168,6 +208,64 @@ TOOLS_SCHEMA: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "update_lead_info",
+            "description": "Record a piece of lead info captured from the customer (e.g. name, city, monthly_income, occupation, phone, requirement).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "field": {"type": "string", "description": "Field name (e.g. name, city, monthly_income, occupation, phone, requirement)"},
+                    "value": {"type": "string", "description": "Value provided by customer"},
+                },
+                "required": ["field", "value"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_lead_profile",
+            "description": "Retrieve all lead profile info collected in this call.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ask_sales_coach",
+            "description": "Ask the background sales coach for tactical advice when facing a hesitation or objection.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "situation": {"type": "string", "description": "Short description of the customer's objection or question"},
+                },
+                "required": ["situation"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "analyze_conversation",
+            "description": "Send transcript to background lead analyst for structured assessment.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "end_call",
+            "description": "Wrap up and end the call after customer agrees to disconnect.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reason": {"type": "string", "description": "Reason for ending call"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "save_user_info",
             "description": "Save customer inquiry or contact details.",
             "parameters": {
@@ -188,6 +286,11 @@ TOOL_HANDLERS: Dict[str, Callable] = {
     "check_card_eligibility": check_card_eligibility,
     "apply_credit_card": apply_credit_card,
     "get_card_benefits": get_card_benefits,
+    "update_lead_info": update_lead_info,
+    "get_lead_profile": get_lead_profile,
+    "analyze_conversation": analyze_conversation,
+    "ask_sales_coach": ask_sales_coach,
+    "end_call": end_call,
     "save_user_info": save_user_info,
     "get_current_time": get_current_time,
     "get_current_weather": get_current_weather,

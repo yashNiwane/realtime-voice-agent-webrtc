@@ -75,8 +75,8 @@ export TORCH_DTYPE="float16"
 export LLM_ENGINE_TYPE="llama_cpp"
 export LLM_N_GPU_LAYERS="-1"
 export LLM_REPO_ID="unsloth/gemma-4-E2B-it-GGUF"
-export LLM_GGUF_FILENAME="gemma-4-E2B-it-Q4_K_M.gguf"
-export LLM_MODEL="gemma-4-e2b-it"
+export LLM_GGUF_FILENAME="gemma-4-E2B-it-Q8_0.gguf"
+export LLM_MODEL="gemma-4-e2b-it-int8"
 export PYTHONFAULTHANDLER="1"
 
 python -m server.webrtc_server

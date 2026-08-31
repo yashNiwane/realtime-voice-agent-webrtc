@@ -127,14 +127,11 @@ class SileroVADAnalyzer:
         raw_prob = self.model(tensor_chunk, self.sample_rate)
         speech_prob = float(raw_prob.item())
 
-        # Adaptive boost for quiet or distant microphones
-        if speech_prob < self.confidence and rms > 0.006 and peak > 0.015:
-            norm_chunk = (chunk_512 / max(peak, 0.04)) * 0.40
-            norm_tensor = torch.from_numpy(norm_chunk.astype(np.float32)).float()
-            norm_prob = float(self.model(norm_tensor, self.sample_rate).item())
-            speech_prob = max(speech_prob, norm_prob)
+        # Noise-floor gate: Ambient background hiss / electrical noise (RMS < 0.008) is not speech
+        if rms < 0.008 or peak < 0.015:
+            speech_prob = min(speech_prob, 0.10)
 
-        is_current_speech = speech_prob >= self.confidence
+        is_current_speech = (speech_prob >= self.confidence) and (rms >= 0.008)
         event: Optional[str] = None
         utterance_pcm: Optional[np.ndarray] = None
 

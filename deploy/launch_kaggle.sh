@@ -6,6 +6,11 @@
 
 set -e
 
+# Automatically navigate to repository root regardless of where the script was invoked from
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
+cd "$SCRIPT_DIR"
+echo "📂 Working directory: $(pwd)"
+
 echo "=================================================================="
 echo "⚡ Starting Realtime WebRTC Voice Agent on Kaggle GPU"
 echo "=================================================================="
@@ -18,19 +23,28 @@ else
     echo "⚠️ No GPU detected. Running in CPU mode with dynamic quantization."
 fi
 
-# 1. Install system libsrtp2-dev for OpenSSL 3.0 compatibility (prevents pylibsrtp wheel segfault)
-echo "📦 Installing system libsrtp2 development headers..."
-apt-get update -qq && apt-get install -y -qq libsrtp2-dev pkg-config wget curl > /dev/null 2>&1 || true
+# 1. Install system libsrtp2-dev, espeak-ng & libsndfile1 for WebRTC & Kokoro phonemizer
+echo "📦 Installing system development headers & espeak-ng phonemizer..."
+apt-get update -qq && apt-get install -y -qq libsrtp2-dev espeak-ng libsndfile1 pkg-config wget curl > /dev/null 2>&1 || true
 
 # 2. Python dependencies (force compile pylibsrtp from source against system libsrtp2)
 echo "🐍 Installing Python dependencies with native OpenSSL 3 bindings, llama-cpp CUDA & Kokoro-82M..."
 pip install --quiet --no-binary pylibsrtp --no-cache-dir pylibsrtp
 pip install --quiet llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu122 || pip install --quiet llama-cpp-python
-pip install --quiet kokoro soundfile
+pip install --quiet kokoro soundfile misaki
 pip install --quiet -r requirements.txt
 
-# Verify aiortc / pylibsrtp import
-python -c "import pylibsrtp, aiortc; print('✅ aiortc & pylibsrtp verified successfully on Python runtime!')"
+# Verify and pre-download Kokoro models for zero-latency warm start
+echo "⚡ Pre-downloading and warming Kokoro-82M neural pipelines (Hindi 'hf_alpha' & English 'af_heart')..."
+python -c "
+import pylibsrtp, aiortc, llama_cpp
+from kokoro import KPipeline
+print('📥 Downloading Kokoro Hindi pipeline...')
+KPipeline(lang_code='h')
+print('📥 Downloading Kokoro English pipeline...')
+KPipeline(lang_code='a')
+print('✅ Kokoro-82M models downloaded and verified on GPU/CPU!')
+"
 
 # 3. Download Cloudflare Tunnel if not present
 if [ ! -f "cloudflared" ]; then
@@ -66,8 +80,8 @@ else
 fi
 echo "=================================================================="
 
-# 5. Start WebRTC Server with CUDA acceleration and Local llama.cpp Gemma 4 E2B GPU Engine
-echo "🔥 Launching WebRTC Server on port 7860 with Local GPU Gemma 4 E2B LLM..."
+# 5. Start WebRTC Server with CUDA acceleration, Local llama.cpp Gemma 4 E2B INT8 & Kokoro-82M GPU TTS
+echo "🔥 Launching WebRTC Server on port 7860 with Kokoro-82M & Gemma 4 E2B INT8..."
 export HOST="0.0.0.0"
 export PORT="7860"
 export DEVICE="cuda"
@@ -77,6 +91,10 @@ export LLM_N_GPU_LAYERS="-1"
 export LLM_REPO_ID="unsloth/gemma-4-E2B-it-GGUF"
 export LLM_GGUF_FILENAME="gemma-4-E2B-it-Q8_0.gguf"
 export LLM_MODEL="gemma-4-e2b-it-int8"
+export TTS_ENGINE="kokoro"
+export KOKORO_VOICE_HI="hf_alpha"
+export KOKORO_VOICE_EN="af_heart"
+export KOKORO_SPEED="1.05"
 export PYTHONFAULTHANDLER="1"
 
 python -m server.webrtc_server

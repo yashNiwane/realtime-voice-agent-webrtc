@@ -30,7 +30,10 @@ from server.config import config, TTSConfig
 
 
 def clean_tts_text(text: str) -> str:
-    """Sanitize LLM output text by stripping markdown, think tags, and symbols for natural speech synthesis."""
+    """
+    Sanitize LLM output text by stripping markdown, think tags, and symbols for natural speech synthesis.
+    Preserves all Devanagari script, Latin text, currency symbols, percentages, and punctuation.
+    """
     if not text:
         return ""
     # Strip thinking / thought tags if any remain
@@ -45,8 +48,15 @@ def clean_tts_text(text: str) -> str:
     cleaned = re.sub(r"_([^_]+)_", r"\1", cleaned)
     cleaned = re.sub(r"^#+\s*", "", cleaned, flags=re.MULTILINE)
     cleaned = re.sub(r"^[-*•]\s*", "", cleaned, flags=re.MULTILINE)
-    # Strip emojis and odd bracket characters
-    cleaned = re.sub(r"[^\w\s.,!?;:।'\-—%₹$€]", " ", cleaned, flags=re.UNICODE)
+    # Strip bullet numbering prefixes like "1. ", "2) "
+    cleaned = re.sub(r"^\d+[\.\)]\s+", "", cleaned, flags=re.MULTILINE)
+    # Normalize currency symbol for phonemizers
+    cleaned = re.sub(r"₹\s*(\d+)", r"Rs. \1", cleaned)
+    cleaned = re.sub(r"&\s*", " and ", cleaned)
+    # Preserve Devanagari (\u0900-\u097F), Latin letters, numbers, and spoken punctuation
+    cleaned = re.sub(r"[^\w\s.,!?;:।॥'\-—%₹$€\"“”‘’\u0900-\u097F\u200C\u200D]", " ", cleaned, flags=re.UNICODE)
+    # Strip standalone hanging punctuation
+    cleaned = re.sub(r"^\s*[,;:\-—]\s*", "", cleaned)
     # Normalize whitespace
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned
@@ -317,8 +327,19 @@ class MultiEngineTTSManager:
         lang_lower = language.lower().strip()
         is_hindi = "hi" in lang_lower or "hindi" in lang_lower
 
-        # 1. Edge-TTS Neural Female Voice (High Quality HD Studio Voice - Primary/Fast)
-        if engine in ("edge", "edge_tts", "auto", "default"):
+        # 1. Kokoro-82M (Realtime Fast GPU Engine - Default Primary)
+        if engine in ("kokoro", "kokoro-82m", "auto", "default"):
+            try:
+                pcm_bytes, pcm_int16, lat_ms, engine_name = await self._synthesize_kokoro(
+                    clean_text, language
+                )
+                logger.info(f"🔊 Kokoro-82M TTS generated ({engine_name}) in {lat_ms:.1f}ms")
+                return pcm_bytes, pcm_int16, lat_ms, engine_name
+            except Exception as e:
+                logger.warning(f"Kokoro-82M primary synthesis note: {e}. Cascading to Edge-TTS fallback...")
+
+        # 2. Edge-TTS Neural Female Voice (High Quality HD Studio Voice - Primary or Fallback)
+        if engine in ("edge", "edge_tts") or engine in ("kokoro", "kokoro-82m", "auto", "default"):
             try:
                 pcm_bytes, pcm_int16, lat_ms, engine_name = await self._synthesize_edge_tts(
                     clean_text, language
@@ -326,29 +347,7 @@ class MultiEngineTTSManager:
                 logger.info(f"🔊 Edge-TTS generated ({engine_name}) in {lat_ms:.1f}ms")
                 return pcm_bytes, pcm_int16, lat_ms, engine_name
             except Exception as e:
-                logger.warning(f"Edge-TTS failed: {e}. Attempting Kokoro...")
-
-        # 2. Kokoro-82M (Realtime Fast GPU Engine)
-        if engine in ("kokoro", "kokoro-82m") or engine in ("edge", "edge_tts", "auto"):
-            try:
-                pcm_bytes, pcm_int16, lat_ms, engine_name = await self._synthesize_kokoro(
-                    clean_text, language
-                )
-                logger.info(f"🔊 Kokoro-82M TTS generated in {lat_ms:.1f}ms")
-                return pcm_bytes, pcm_int16, lat_ms, engine_name
-            except Exception as e:
-                logger.warning(f"Kokoro-82M failed: {e}. Falling back to Edge-TTS...")
-
-        # If Kokoro was primary and failed, try Edge-TTS
-        if engine in ("kokoro", "kokoro-82m"):
-            try:
-                pcm_bytes, pcm_int16, lat_ms, engine_name = await self._synthesize_edge_tts(
-                    clean_text, language
-                )
-                logger.info(f"🔊 Edge-TTS fallback generated ({engine_name}) in {lat_ms:.1f}ms")
-                return pcm_bytes, pcm_int16, lat_ms, engine_name
-            except Exception as e:
-                logger.warning(f"Edge-TTS fallback also failed: {e}")
+                logger.warning(f"Edge-TTS failed: {e}. Falling back to alternative...")
 
         # 3. Cartesia Sonic-3 Engine
         if engine == "cartesia":

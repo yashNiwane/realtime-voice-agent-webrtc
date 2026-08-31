@@ -36,58 +36,86 @@ from server.llm_engine import LLMEvent
 from server.tts_engine import MultiEngineTTSManager
 
 
-class StreamTextChunker:
+class SentenceTextChunker:
     """
-    Adaptive Stream Text Chunker (mimics Hugging Face / FastRTC clause splitting).
+    High-Fidelity Sentence-Based Stream Text Chunker for Conversational TTS.
     
-    Pacing Strategy:
-    1. First Chunk: Emitted rapidly after 2-4 words or any early punctuation (, ; : -)
-       to minimize Time-To-First-Audio (TTFA < 200ms).
-    2. Subsequent Chunks: Grouped into natural semantic clauses (5-10 words or sentence endings)
-       to maximize prosody and emotional cadence.
+    Principles:
+    1. Chunks strictly by complete grammatical sentences (terminated by '.', '!', '?', '।', '॥', '\n')
+       to preserve natural phonetics, intonation contours, and human-like emotional speech.
+    2. Protects numbers, percentages, currency, and abbreviations (e.g. '₹5,000', '10.5%', 'Rs.', 'Mr.', 'Dr.', 'vs.')
+       from accidental premature splitting.
+    3. Handles long run-on sentences (> 14 words) gracefully by allowing natural clause boundaries (',', ';', '—')
+       only when necessary to maintain streaming fluidity without sacrificing prosody.
     """
 
-    def __init__(self):
+    ABBREVIATIONS = {
+        "mr.", "mrs.", "ms.", "dr.", "prof.", "sr.", "jr.", "vs.", "etc.",
+        "i.e.", "e.g.", "a.m.", "p.m.", "rs.", "approx.", "dept.", "no.",
+        "ltd.", "inc.", "corp.", "co.", "st.", "ave.", "jan.", "feb.", "mar.",
+        "apr.", "jun.", "jul.", "aug.", "sep.", "oct.", "nov.", "dec."
+    }
+
+    def __init__(self, min_clause_words: int = 14):
         self.buffer: str = ""
-        self.first_chunk_emitted: bool = False
-        self.sentence_delimiters = (".", "!", "?", "।", "\n")
-        self.clause_delimiters = (",", ";", ":", "-", "—", "।")
+        self.min_clause_words: int = min_clause_words
+        self.sentence_delimiters = (".", "!", "?", "।", "॥", "\n")
+        self.clause_delimiters = (",", ";", ":", "—", "-")
+
+    def _is_abbreviation(self, text: str, dot_pos: int) -> bool:
+        """Check if a dot at dot_pos is part of an abbreviation or decimal number."""
+        if dot_pos > 0 and dot_pos < len(text) - 1:
+            if text[dot_pos - 1].isdigit() and text[dot_pos + 1].isdigit():
+                return True
+
+        preceding = text[: dot_pos + 1].split()[-1].lower() if text[: dot_pos + 1].split() else ""
+        if preceding in self.ABBREVIATIONS:
+            return True
+
+        if len(preceding) == 2 and preceding[0].isalpha() and preceding[1] == ".":
+            return True
+
+        return False
 
     def push_token(self, token: str) -> Optional[str]:
         """
-        Push incoming token and return completed clause if boundary reached, else None.
+        Push incoming token and return completed sentence if boundary reached, else None.
         """
         self.buffer += token
-        clean_buf = self.buffer.strip()
-        words = clean_buf.split()
+        buf = self.buffer
 
-        if not clean_buf or len(words) == 0:
-            return None
+        # Find potential sentence boundaries
+        for i, char in enumerate(buf):
+            if char in self.sentence_delimiters:
+                if char == "." and self._is_abbreviation(buf, i):
+                    continue
 
-        has_sentence_end = any(d in token for d in self.sentence_delimiters)
-        has_clause_end = any(d in token for d in self.clause_delimiters)
+                is_at_end = (i == len(buf) - 1)
+                has_trailing_space = (i < len(buf) - 1 and buf[i + 1] in (" ", "\t", "\n", '"', "”", "'", "’"))
 
-        # Trigger Conditions
-        if not self.first_chunk_emitted:
-            # First chunk: rapid early trigger for instant voice
-            trigger = (
-                has_sentence_end
-                or (has_clause_end and len(words) >= 2)
-                or (len(words) >= 3 and len(clean_buf) >= 12)
-            )
-        else:
-            # Steady state: natural prosody grouping
-            trigger = (
-                has_sentence_end
-                or (has_clause_end and len(words) >= 4)
-                or (len(words) >= 7 and len(clean_buf) >= 28)
-            )
+                if has_trailing_space or char == "\n" or (is_at_end and char in ("?", "!", "।", "॥")):
+                    split_idx = i + 1
+                    while split_idx < len(buf) and buf[split_idx] in ('"', '”', "'", "’", " "):
+                        split_idx += 1
 
-        if trigger:
-            phrase = clean_buf
-            self.buffer = ""
-            self.first_chunk_emitted = True
-            return phrase
+                    sentence = buf[:split_idx].strip()
+                    remaining = buf[split_idx:].lstrip()
+
+                    if sentence and len(sentence.split()) > 0:
+                        self.buffer = remaining
+                        return sentence
+
+        # Long sentence clause fallback (> min_clause_words words)
+        words = buf.strip().split()
+        if len(words) >= self.min_clause_words:
+            for d in self.clause_delimiters:
+                pos = buf.rfind(d)
+                if pos > 0 and len(buf[:pos].split()) >= 6:
+                    sentence = buf[:pos + 1].strip()
+                    remaining = buf[pos + 1:].lstrip()
+                    if sentence:
+                        self.buffer = remaining
+                        return sentence
 
         return None
 
@@ -102,7 +130,6 @@ class StreamTextChunker:
     def reset(self):
         """Reset state for next turn."""
         self.buffer = ""
-        self.first_chunk_emitted = False
 
 
 class RealtimeVoiceSession:
@@ -200,9 +227,9 @@ class RealtimeVoiceSession:
         })
 
         # =====================================================================
-        # Stage 2 & 3: Streaming LLM + Adaptive Text Chunker + Fast GPU TTS
+        # Stage 2 & 3: Streaming LLM + Sentence Text Chunker + Fast GPU TTS
         # =====================================================================
-        chunker = StreamTextChunker()
+        chunker = SentenceTextChunker()
         t0_llm = time.perf_counter()
         first_token_time: Optional[float] = None
         first_audio_emitted = False
@@ -231,9 +258,14 @@ class RealtimeVoiceSession:
                         preferred_engine=self.preferred_tts,
                     )
                     if not self._is_interrupted and gen_id == self.generation_id:
-                        await tts_results.put((seq_num, pcm_bytes, pcm16_arr, tts_lat, engine_name))
+                        if pcm_bytes and len(pcm16_arr) > 0:
+                            await tts_results.put((seq_num, pcm_bytes, pcm16_arr, tts_lat, engine_name))
+                        else:
+                            await tts_results.put((seq_num, b"", np.zeros(0, dtype=np.int16), 0.0, "skip"))
                 except Exception as e:
                     logger.error(f"TTS synthesis error on '{phrase_text}': {e}")
+                    if not self._is_interrupted and gen_id == self.generation_id:
+                        await tts_results.put((seq_num, b"", np.zeros(0, dtype=np.int16), 0.0, "error"))
                 finally:
                     tts_queue.task_done()
 

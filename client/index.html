@@ -1054,7 +1054,7 @@
       <div class="telemetry-card">
         <div class="card-header">
           <span class="card-title"><span>🔊</span> TTS Latency</span>
-          <span class="card-badge" id="ttsEngineBadge">EDGE FEMALE</span>
+          <span class="card-badge" id="ttsEngineBadge">KOKORO HINDI</span>
         </div>
         <div class="metric-value-row">
           <span class="metric-value" id="ttsLatencyVal">--</span>
@@ -1123,16 +1123,16 @@
         <div class="setting-description">Select primary voice synthesis provider.</div>
         
         <div class="engine-options">
-          <label class="engine-card selected" id="cardTtsEdge">
-            <input type="radio" name="tts_engine" value="edge" checked>
+          <label class="engine-card" id="cardTtsEdge">
+            <input type="radio" name="tts_engine" value="edge">
             <div class="engine-info">
               <h4>🌐 Edge-TTS Neural (Female Voice)</h4>
               <p>Microsoft Swara (Hindi) &amp; Neerja (English) studio HD voices</p>
             </div>
           </label>
 
-          <label class="engine-card" id="cardTtsKokoro">
-            <input type="radio" name="tts_engine" value="kokoro">
+          <label class="engine-card selected" id="cardTtsKokoro">
+            <input type="radio" name="tts_engine" value="kokoro" checked>
             <div class="engine-info">
               <h4>🔥 Kokoro-82M (Realtime GPU)</h4>
               <p>24kHz studio female voice (hf_alpha / af_heart)</p>
@@ -1266,7 +1266,7 @@
       // Current Settings
       let currentSettings = {
         language: 'Hindi',
-        tts_engine: 'edge',
+        tts_engine: 'kokoro',
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
@@ -1682,9 +1682,8 @@
           if (pCtx.state === 'suspended') {
             await pCtx.resume();
           }
-          remoteAudio.muted = false;
-          remoteAudio.volume = 1.0;
-          remoteAudio.play().catch(() => {});
+          // Mute remoteAudio to prevent echo since playBase64Audio Web Audio handles 48kHz output
+          remoteAudio.muted = true;
 
           // 1. Get User Media with AEC, Noise Suppression, and AGC
           const audioConstraints = {
@@ -1701,9 +1700,6 @@
 
           localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false });
           initVisualizer(localStream);
-
-          // Start WebSocket voice channel (100% reliable fallback over Cloudflare Tunnel)
-          startWebSocketAudioStream(localStream);
 
           // 2. Initialize RTCPeerConnection
           peerConnection = new RTCPeerConnection({
@@ -1730,7 +1726,6 @@
             } else {
               remoteAudio.srcObject = new MediaStream([event.track]);
             }
-            remoteAudio.play().catch(err => console.warn('Autoplay note:', err));
           };
 
           // 6. Handle Connection States
@@ -1781,6 +1776,9 @@
                 type: answerData.type || 'answer'
               }));
             }
+          } else {
+            console.warn('WebRTC offer failed, initiating WebSocket fallback...');
+            startWebSocketAudioStream(localStream);
           }
 
           isCalling = true;
@@ -1790,18 +1788,13 @@
           btnCall.disabled = false;
 
         } catch (err) {
-          console.error('Call initialization note:', err);
-          if (wsChannel && wsChannel.readyState === WebSocket.OPEN) {
-            isCalling = true;
-            btnCall.className = 'btn-mic active';
-            btnCallIcon.textContent = '⏹️';
-            btnCallLabel.textContent = 'End Conversation';
-            btnCall.disabled = false;
-          } else {
-            alert('Audio connection failed: ' + err.message);
-            setStatus('error', 'Connection Failed');
-            stopCall();
-          }
+          console.warn('WebRTC initialization failed, falling back to WebSocket:', err);
+          startWebSocketAudioStream(localStream);
+          isCalling = true;
+          btnCall.className = 'btn-mic active';
+          btnCallIcon.textContent = '⏹️';
+          btnCallLabel.textContent = 'End Conversation';
+          btnCall.disabled = false;
         }
       }
 

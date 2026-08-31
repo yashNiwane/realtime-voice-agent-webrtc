@@ -461,7 +461,7 @@ def parse_args():
         "--sample-rate",
         "-r",
         type=int,
-        default=16000,
+        default=48000,
         help="Audio sample rate (16000 or 48000 Hz)",
     )
     parser.add_argument(
@@ -474,9 +474,9 @@ def parse_args():
     parser.add_argument(
         "--tts-engine",
         "-t",
-        default="edge",
-        choices=["edge", "vits", "cartesia", "kokoro"],
-        help="Preferred TTS synthesis engine (edge, vits, cartesia, kokoro)",
+        default="kokoro",
+        choices=["kokoro", "edge", "vits", "cartesia"],
+        help="Preferred TTS synthesis engine (kokoro, edge, vits, cartesia)",
     )
     parser.add_argument(
         "--gain",

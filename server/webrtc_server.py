@@ -276,8 +276,9 @@ app.add_middleware(
 class OfferModel(BaseModel):
     sdp: str
     type: str
-    language: Optional[str] = None
-    tts_engine: Optional[str] = None
+    language: Optional[str] = "Hindi"
+    tts_engine: Optional[str] = "kokoro"
+    config: Optional[Dict[str, Any]] = None
 
 
 async def run_voice_pipeline(
@@ -418,11 +419,16 @@ async def webrtc_offer(offer_data: OfferModel):
     )
     pc.addTrack(server_track)
 
-    session = PeerSession(pc, server_track)
-    if offer_data.language:
-        session.preferred_language = offer_data.language
-    if offer_data.tts_engine:
-        session.preferred_tts_engine = offer_data.tts_engine
+    session = PeerSession(pc, server_track)    # Set session preferences if provided in offer
+    lang = (offer_data.config.get("language") if offer_data.config else None) or offer_data.language
+    if lang:
+        session.preferred_language = lang
+        session.voice_pipeline.preferred_lang = lang
+
+    tts_eng = (offer_data.config.get("tts_engine") if offer_data.config else None) or offer_data.tts_engine
+    if tts_eng:
+        session.preferred_tts_engine = tts_eng
+        session.voice_pipeline.preferred_tts = tts_eng
 
     @pc.on("datachannel")
     def on_datachannel(channel: RTCDataChannel):
@@ -435,18 +441,32 @@ async def webrtc_offer(offer_data: OfferModel):
                 try:
                     data = json.loads(message)
                     msg_type = data.get("type")
-                    if msg_type == "set_language":
+                    if msg_type in ("config", "set_config"):
+                        c_lang = data.get("language")
+                        c_eng = data.get("tts_engine") or data.get("engine")
+                        if c_lang:
+                            session.preferred_language = c_lang
+                            session.voice_pipeline.preferred_lang = c_lang
+                            logger.info(f"Updated session language via config to '{c_lang}'")
+                        if c_eng:
+                            session.preferred_tts_engine = c_eng
+                            session.voice_pipeline.preferred_tts = c_eng
+                            logger.info(f"Updated session TTS engine via config to '{c_eng}'")
+                    elif msg_type == "set_language":
                         session.preferred_language = data.get("language", "Hindi")
+                        session.voice_pipeline.preferred_lang = session.preferred_language
                         logger.info(f"Updated session language to '{session.preferred_language}'")
                     elif msg_type == "set_engine":
-                        session.preferred_tts_engine = data.get("engine", "vits")
+                        session.preferred_tts_engine = data.get("engine", "kokoro")
+                        session.voice_pipeline.preferred_tts = session.preferred_tts_engine
                         logger.info(f"Updated session TTS engine to '{session.preferred_tts_engine}'")
                     elif msg_type == "interrupt":
                         session.server_track.flush()
+                        session.voice_pipeline.interrupt()
                         if session.current_pipeline_task and not session.current_pipeline_task.done():
                             session.current_pipeline_task.cancel()
                     elif msg_type == "clear_history":
-                        session.messages = llm_engine.create_session_messages() if llm_engine else []
+                        session.voice_pipeline.messages = llm_engine.create_session_messages() if llm_engine else []
                         session.send_telemetry({"type": "history_cleared"})
                 except Exception as e:
                     logger.debug(f"DataChannel message parse error: {e}")

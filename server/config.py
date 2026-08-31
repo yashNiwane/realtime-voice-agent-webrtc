@@ -194,8 +194,8 @@ class LLMConfig(BaseModel):
 class TTSConfig(BaseModel):
     """Configuration for Multi-Engine Text-to-Speech synthesizer."""
     default_engine: str = Field(
-        default_factory=lambda: os.getenv("TTS_ENGINE", "edge").lower(),
-        description="Default TTS engine: 'edge' (HD neural female cloud), 'kokoro' (realtime GPU 82M), 'vits' (local offline), 'cartesia'",
+        default_factory=lambda: os.getenv("TTS_ENGINE", "kokoro").lower(),
+        description="Default TTS engine: 'kokoro' (realtime GPU 82M), 'edge' (HD neural female cloud), 'vits' (local offline), 'cartesia'",
     )
 
     sample_rate: int = Field(

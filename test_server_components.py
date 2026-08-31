@@ -55,18 +55,37 @@ async def run_tests():
     assert vres.is_speech is False
     logger.info(f"   -> VAD tests passed (silence prob={vres.probability:.4f}).")
 
-    logger.info("6. Testing TTS 48kHz Resampler & Text Cleaner...")
+    logger.info("6. Testing Sentence-Based Chunker, 48kHz Resampler & Hindi Cleaner...")
     audio16 = np.zeros(1600, dtype=np.float32)
     bytes_48k, pcm_int16 = resample_to_48k_pcm16(audio16, 16000)
     assert len(pcm_int16) == 4800
     assert len(bytes_48k) == 9600
 
+    from server.pipeline import SentenceTextChunker
+    chunker = SentenceTextChunker()
+    tokens = ["नमस्ते! ", "यह ", "क्रेडिट ", "कार्ड ", "100% ", "फ्री ", "है। ", "क्या ", "आप ", "Rs. 500 ", "का ", "कैशबैक ", "चाहते ", "हैं?"]
+    emitted = []
+    for tok in tokens:
+        c = chunker.push_token(tok)
+        if c:
+            emitted.append(c)
+    last = chunker.flush()
+    if last:
+        emitted.append(last)
+    
+    assert len(emitted) == 3
+    assert emitted[0] == "नमस्ते!"
+    assert "100% फ्री है।" in emitted[1]
+    assert "Rs. 500" in emitted[2]
+
     from server.tts_engine import clean_tts_text, MultiEngineTTSManager
-    clean = clean_tts_text("**Apex Platinum Card** is 100% *free* forever! <think>reasoning</think>")
+    clean = clean_tts_text("**Apex Platinum Card** is 100% *free* forever! <think>reasoning</think> ₹5000 कैशबैक।")
     assert "Apex Platinum Card is 100% free forever!" in clean
+    assert "Rs. 5000" in clean
+    assert "कैशबैक।" in clean
     assert "<think>" not in clean
     assert "**" not in clean
-    logger.info("   -> TTS resampler and text cleaner tests passed.")
+    logger.info("   -> SentenceTextChunker and Hindi text cleaner tests passed.")
 
     logger.info("7. Testing WebRTC ServerAudioStreamTrack Pacing & Flush...")
     track = ServerAudioStreamTrack()

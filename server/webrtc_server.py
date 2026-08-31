@@ -362,6 +362,7 @@ async def handle_incoming_audio(
                     "prob": round(vad_res.probability, 3),
                     "speech_prob": round(vad_res.probability, 3),
                     "is_speech": vad_res.is_speech,
+                    "rms": round(vad_res.rms * 1000, 1),
                 })
 
                 # Handle Barge-In / Interruption on SPEECH_START only when assistant is actively generating or speaking
@@ -580,6 +581,7 @@ async def websocket_audio_endpoint(websocket: WebSocket):
                         "prob": round(vad_res.probability, 3),
                         "speech_prob": round(vad_res.probability, 3),
                         "is_speech": vad_res.is_speech,
+                        "rms": round(vad_res.rms * 1000, 1),
                     })
 
                     if vad_res.event == "SPEECH_START":

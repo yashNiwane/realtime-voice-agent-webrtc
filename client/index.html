@@ -1878,14 +1878,14 @@
             vadProbVal.textContent = prob;
             vadMeterFill.style.width = prob + '%';
 
-            if (data.is_speech) {
+            if (data.is_speech || prob >= 40) {
               vadMeterFill.className = 'vad-meter-fill speech-active';
-              vadStatusText.textContent = 'VOICE DETECTED';
+              vadStatusText.textContent = 'VOICE ACTIVE';
               vadStatusText.className = 'vad-status-text voice';
               setAgentState('listening', 'USER SPEAKING');
             } else {
               vadMeterFill.className = 'vad-meter-fill';
-              vadStatusText.textContent = 'SILENCE / NOISE';
+              vadStatusText.textContent = 'LISTENING...';
               vadStatusText.className = 'vad-status-text noise';
               if (activeAssistantBubble) {
                 setAgentState('speaking', 'AI SPEAKING');

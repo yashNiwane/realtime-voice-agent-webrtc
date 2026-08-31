@@ -28,6 +28,7 @@ class VADResult:
     is_speech: bool
     event: Optional[str] = None  # None, "SPEECH_START", or "SPEECH_END"
     audio_utterance: Optional[np.ndarray] = None  # Full collected float32 PCM utterance on SPEECH_END
+    rms: float = 0.0
 
 
 class SileroVADAnalyzer:
@@ -127,11 +128,11 @@ class SileroVADAnalyzer:
         raw_prob = self.model(tensor_chunk, self.sample_rate)
         speech_prob = float(raw_prob.item())
 
-        # Noise-floor gate: Ambient background hiss / electrical noise (RMS < 0.008) is not speech
-        if rms < 0.008 or peak < 0.015:
-            speech_prob = min(speech_prob, 0.10)
+        # Gate only on absolute digital silence / zero signal (RMS < 0.0008)
+        if rms < 0.0008 and peak < 0.0015:
+            speech_prob = min(speech_prob, 0.05)
 
-        is_current_speech = (speech_prob >= self.confidence) and (rms >= 0.008)
+        is_current_speech = (speech_prob >= self.confidence)
         event: Optional[str] = None
         utterance_pcm: Optional[np.ndarray] = None
 
@@ -193,4 +194,5 @@ class SileroVADAnalyzer:
             is_speech=self.is_speaking,
             event=event,
             audio_utterance=utterance_pcm,
+            rms=rms,
         )

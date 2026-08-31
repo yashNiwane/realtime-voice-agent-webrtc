@@ -100,15 +100,15 @@ class ASRConfig(BaseModel):
 class VADConfig(BaseModel):
     """Configuration for Silero Neural Voice Activity Detector."""
     confidence: float = Field(
-        default_factory=lambda: float(os.getenv("VAD_CONFIDENCE", "0.55")),
+        default_factory=lambda: float(os.getenv("VAD_CONFIDENCE", "0.40")),
         description="Speech probability threshold (0.0 - 1.0) to qualify as speech",
     )
     start_secs: float = Field(
-        default_factory=lambda: float(os.getenv("VAD_START_SECS", "0.22")),
+        default_factory=lambda: float(os.getenv("VAD_START_SECS", "0.096")),
         description="Minimum duration of continuous speech to trigger speech start (filters ambient pops/clicks)",
     )
     stop_secs: float = Field(
-        default_factory=lambda: float(os.getenv("VAD_STOP_SECS", "0.45")),
+        default_factory=lambda: float(os.getenv("VAD_STOP_SECS", "0.50")),
         description="Duration of silence required to trigger speech end / turn completion",
     )
     sample_rate: int = Field(default=16000, description="VAD audio sample rate in Hz")
@@ -118,7 +118,7 @@ class VADConfig(BaseModel):
         description="Duration of pre-speech audio buffer in ms to prevent clipping initial consonants",
     )
     min_speech_duration_ms: int = Field(
-        default_factory=lambda: int(os.getenv("VAD_MIN_SPEECH_MS", "300")),
+        default_factory=lambda: int(os.getenv("VAD_MIN_SPEECH_MS", "250")),
         description="Minimum valid utterance length to filter out transient pops/clicks",
     )
 

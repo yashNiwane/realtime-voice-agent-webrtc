@@ -189,16 +189,19 @@ class PeerSession:
         async def _telemetry_cb(event_data):
             self.send_telemetry(event_data)
 
-        async def _audio_output_cb(pcm_bytes, pcm16_arr, engine_name, latency_ms):
+        async def _audio_output_cb(pcm_bytes, pcm16_arr, engine_name, latency_ms, gen_id=0):
+            if self.voice_pipeline._is_interrupted or (gen_id and gen_id != self.voice_pipeline.generation_id):
+                return
             self.server_track.add_pcm16_audio(pcm16_arr)
             import base64
-            # Broadcast tts_audio over DataChannel as universal high-reliability fallback for browser Web Audio playback
+            # Broadcast tts_audio over DataChannel with generation_id for browser Web Audio playback
             self.send_telemetry({
                 "type": "tts_audio",
                 "audio_base64": base64.b64encode(pcm_bytes).decode("utf-8"),
                 "latency_ms": round(latency_ms, 1),
                 "engine": engine_name,
                 "sample_rate": 48000,
+                "generation_id": gen_id or self.voice_pipeline.generation_id,
             })
 
         self.voice_pipeline = RealtimeVoiceSession(
@@ -364,13 +367,20 @@ async def handle_incoming_audio(
                 if vad_res.event == "SPEECH_START":
                     is_assistant_active = session.server_track._is_speaking or (
                         session.current_pipeline_task and not session.current_pipeline_task.done()
+                    ) or (
+                        session.voice_pipeline._active_turn_task and not session.voice_pipeline._active_turn_task.done()
                     )
                     if is_assistant_active:
                         session.server_track.flush()
+                        session.voice_pipeline.interrupt()
                         if session.current_pipeline_task and not session.current_pipeline_task.done():
                             session.current_pipeline_task.cancel()
-                        session.send_telemetry({"type": "interrupt", "timestamp": time.time()})
-                        logger.info("🛑 [BARGE-IN] User confirmed speech onset; flushed assistant playback.")
+                        session.send_telemetry({
+                            "type": "interrupt",
+                            "generation_id": session.voice_pipeline.generation_id,
+                            "timestamp": time.time(),
+                        })
+                        logger.info(f"🛑 [BARGE-IN] User confirmed speech onset; flushed assistant playback (gen_id={session.voice_pipeline.generation_id}).")
 
                 # Handle Turn Completion on SPEECH_END
                 elif vad_res.event == "SPEECH_END" and vad_res.audio_utterance is not None:
@@ -555,8 +565,12 @@ async def websocket_audio_endpoint(websocket: WebSocket):
                     if vad_res.event == "SPEECH_START":
                         if ws_pipeline._active_turn_task and not ws_pipeline._active_turn_task.done():
                             ws_pipeline.interrupt()
-                            await websocket.send_json({"type": "interrupt", "timestamp": time.time()})
-                            logger.info("🛑 [BARGE-IN] User confirmed speech onset; interrupted active WebSocket turn.")
+                            await websocket.send_json({
+                                "type": "interrupt",
+                                "generation_id": ws_pipeline.generation_id,
+                                "timestamp": time.time(),
+                            })
+                            logger.info(f"🛑 [BARGE-IN] User confirmed speech onset; interrupted active WebSocket turn (gen_id={ws_pipeline.generation_id}).")
 
                     elif vad_res.event == "SPEECH_END" and vad_res.audio_utterance is not None:
                         utterance = vad_res.audio_utterance

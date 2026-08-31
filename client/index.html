@@ -1518,6 +1518,7 @@
       let scriptProcessor = null;
       let playbackAudioCtx = null;
       let nextAudioStartTime = 0;
+      let activeGenerationId = 0;
       const activeAudioSources = [];
 
       function getPlaybackContext(sampleRate = 48000) {
@@ -1542,6 +1543,12 @@
           nextAudioStartTime = playbackAudioCtx.currentTime;
         } else {
           nextAudioStartTime = 0;
+        }
+        if (remoteAudio) {
+          try {
+            remoteAudio.pause();
+            remoteAudio.currentTime = 0;
+          } catch (e) {}
         }
       }
 
@@ -1907,6 +1914,9 @@
 
           case 'final_transcript':
           case 'transcript': {
+            if (data.generation_id) {
+              activeGenerationId = data.generation_id;
+            }
             const text = data.text;
             const lat = data.latency_ms || 0;
             const lang = data.language || currentSettings.language;
@@ -1921,6 +1931,12 @@
           }
 
           case 'llm_ttft': {
+            if (data.generation_id && data.generation_id < activeGenerationId) {
+              return;
+            }
+            if (data.generation_id && data.generation_id > activeGenerationId) {
+              activeGenerationId = data.generation_id;
+            }
             const ttft = data.ttft_ms || 0;
             llmTtftVal.textContent = ttft.toFixed(1);
             totalTokens = 0;
@@ -1931,6 +1947,9 @@
           }
 
           case 'llm_token': {
+            if (data.generation_id && data.generation_id < activeGenerationId) {
+              return;
+            }
             const token = data.token || '';
             totalTokens++;
             tokenCountText.textContent = `${totalTokens} tokens`;
@@ -1940,6 +1959,11 @@
           }
 
           case 'interrupt': {
+            if (data.generation_id) {
+              activeGenerationId = data.generation_id;
+            } else {
+              activeGenerationId++;
+            }
             stopAndClearAudioPlayback();
             finalizeAssistantMessage();
             setAgentState('listening', 'USER SPEAKING');
@@ -1947,11 +1971,17 @@
           }
 
           case 'tool_call': {
+            if (data.generation_id && data.generation_id < activeGenerationId) {
+              return;
+            }
             appendToolCallBadge(data.name, data.arguments || data.args, data.result);
             break;
           }
 
           case 'tts_start': {
+            if (data.generation_id && data.generation_id < activeGenerationId) {
+              return;
+            }
             const ttsLat = data.tts_latency_ms || 0;
             const e2eLat = data.e2e_latency_ms || 0;
             ttsLatencyVal.textContent = ttsLat.toFixed(1);
@@ -1964,6 +1994,14 @@
           }
 
           case 'tts_audio': {
+            if (data.generation_id && data.generation_id < activeGenerationId) {
+              // Discard stale in-flight audio from cancelled turn
+              return;
+            }
+            if (data.generation_id && data.generation_id > activeGenerationId) {
+              activeGenerationId = data.generation_id;
+              nextAudioStartTime = 0;
+            }
             if (data.audio_base64) {
               playBase64Audio(data.audio_base64);
             }
@@ -1977,6 +2015,9 @@
           }
 
           case 'llm_done': {
+            if (data.generation_id && data.generation_id < activeGenerationId) {
+              return;
+            }
             finalizeAssistantMessage();
             setAgentState('listening', 'LISTENING');
             break;

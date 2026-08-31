@@ -131,6 +131,7 @@ class RealtimeVoiceSession:
         self.messages: List[Dict[str, Any]] = self.llm.create_session_messages()
         self._active_turn_task: Optional[asyncio.Task] = None
         self._is_interrupted: bool = False
+        self.generation_id: int = 0
 
     async def _emit_telemetry(self, data: Dict[str, Any]):
         if self.telemetry_cb:
@@ -141,12 +142,20 @@ class RealtimeVoiceSession:
 
     def interrupt(self):
         """
-        Barge-in interrupt handler: Immediately halts active LLM/TTS generation.
+        Barge-in interrupt handler: Immediately halts active LLM/TTS generation,
+        increments generation ID to discard in-flight audio, and sanitizes message history.
         """
         self._is_interrupted = True
+        self.generation_id += 1
+
         if self._active_turn_task and not self._active_turn_task.done():
             self._active_turn_task.cancel()
-            logger.info("🛑 [PIPELINE] Active turn cancelled by user barge-in.")
+            logger.info(f"🛑 [PIPELINE] Active turn cancelled by user barge-in (gen_id={self.generation_id}).")
+
+        # Sanitize message history: if an interrupted turn left a trailing user message,
+        # pop it so the LLM does not get confused by multiple consecutive user turns
+        if self.messages and len(self.messages) > 1 and self.messages[-1].get("role") == "user":
+            self.messages.pop()
 
     async def process_utterance(self, pcm_audio: np.ndarray, sample_rate: int = 16000):
         """
@@ -155,16 +164,17 @@ class RealtimeVoiceSession:
         # Cancel any ongoing turn
         self.interrupt()
         self._is_interrupted = False
+        current_gen = self.generation_id
 
         self._active_turn_task = asyncio.create_task(
-            self._run_streaming_pipeline(pcm_audio, sample_rate)
+            self._run_streaming_pipeline(pcm_audio, sample_rate, current_gen)
         )
         try:
             await self._active_turn_task
         except asyncio.CancelledError:
-            logger.debug("Turn task cancelled.")
+            logger.debug(f"Turn task cancelled (gen_id={current_gen}).")
 
-    async def _run_streaming_pipeline(self, pcm_audio: np.ndarray, sample_rate: int):
+    async def _run_streaming_pipeline(self, pcm_audio: np.ndarray, sample_rate: int, gen_id: int):
         t0_turn = time.perf_counter()
 
         # =====================================================================
@@ -175,17 +185,18 @@ class RealtimeVoiceSession:
             pcm_audio, sample_rate
         )
 
-        if not transcript or self._is_interrupted:
+        if not transcript or self._is_interrupted or gen_id != self.generation_id:
             return
 
         active_language = self.preferred_lang or detected_lang or "Hindi"
-        logger.info(f"🎙️ [ASR] '{transcript}' ({active_language}, {asr_latency:.1f}ms)")
+        logger.info(f"🎙️ [ASR] '{transcript}' ({active_language}, {asr_latency:.1f}ms) [gen={gen_id}]")
 
         await self._emit_telemetry({
             "type": "final_transcript",
             "text": transcript,
             "language": active_language,
             "latency_ms": round(asr_latency, 1),
+            "generation_id": gen_id,
         })
 
         # =====================================================================
@@ -209,7 +220,7 @@ class RealtimeVoiceSession:
                 if item is None:
                     break
                 phrase_text, seq_num = item
-                if self._is_interrupted:
+                if self._is_interrupted or gen_id != self.generation_id:
                     tts_queue.task_done()
                     continue
 
@@ -219,7 +230,8 @@ class RealtimeVoiceSession:
                         language=active_language,
                         preferred_engine=self.preferred_tts,
                     )
-                    await tts_results.put((seq_num, pcm_bytes, pcm16_arr, tts_lat, engine_name))
+                    if not self._is_interrupted and gen_id == self.generation_id:
+                        await tts_results.put((seq_num, pcm_bytes, pcm16_arr, tts_lat, engine_name))
                 except Exception as e:
                     logger.error(f"TTS synthesis error on '{phrase_text}': {e}")
                 finally:
@@ -239,7 +251,7 @@ class RealtimeVoiceSession:
                 if item is None:
                     break
                 seq_num, pcm_bytes, pcm16_arr, tts_lat, engine_name = item
-                if self._is_interrupted:
+                if self._is_interrupted or gen_id != self.generation_id:
                     tts_results.task_done()
                     continue
 
@@ -250,9 +262,9 @@ class RealtimeVoiceSession:
                     c_bytes, c_arr, c_lat, c_eng = pending_chunks.pop(next_expected_seq)
                     next_expected_seq += 1
 
-                    if not self._is_interrupted and len(c_arr) > 0:
+                    if not self._is_interrupted and gen_id == self.generation_id and len(c_arr) > 0:
                         if self.audio_output_cb:
-                            await self.audio_output_cb(c_bytes, c_arr, c_eng, c_lat)
+                            await self.audio_output_cb(c_bytes, c_arr, c_eng, c_lat, gen_id)
 
                         if not first_audio_emitted:
                             first_audio_emitted = True
@@ -262,6 +274,7 @@ class RealtimeVoiceSession:
                                 "engine": c_eng,
                                 "tts_latency_ms": round(c_lat, 1),
                                 "e2e_latency_ms": round(e2e_lat, 1),
+                                "generation_id": gen_id,
                             })
 
                 tts_results.task_done()
@@ -271,7 +284,7 @@ class RealtimeVoiceSession:
         try:
             # Stream LLM tokens
             async for event in self.llm.stream_response(transcript, self.messages):
-                if self._is_interrupted:
+                if self._is_interrupted or gen_id != self.generation_id:
                     break
 
                 if event.type == "token":
@@ -281,14 +294,19 @@ class RealtimeVoiceSession:
                         await self._emit_telemetry({
                             "type": "llm_ttft",
                             "ttft_ms": round(first_token_time, 1),
+                            "generation_id": gen_id,
                         })
 
-                    await self._emit_telemetry({"type": "llm_token", "token": token})
+                    await self._emit_telemetry({
+                        "type": "llm_token",
+                        "token": token,
+                        "generation_id": gen_id,
+                    })
                     full_llm_text += token
 
                     # Check for completed clause
                     phrase = chunker.push_token(token)
-                    if phrase and not self._is_interrupted:
+                    if phrase and not self._is_interrupted and gen_id == self.generation_id:
                         await tts_queue.put((phrase, tts_sequence_counter))
                         tts_sequence_counter += 1
 
@@ -299,30 +317,33 @@ class RealtimeVoiceSession:
                         "name": event.tool_data["name"],
                         "arguments": event.tool_data["arguments"],
                         "result": event.tool_data["result"],
+                        "generation_id": gen_id,
                     })
 
                 elif event.type == "done":
                     # Flush any trailing text chunk
                     trailing_phrase = chunker.flush()
-                    if trailing_phrase and not self._is_interrupted:
+                    if trailing_phrase and not self._is_interrupted and gen_id == self.generation_id:
                         await tts_queue.put((trailing_phrase, tts_sequence_counter))
                         tts_sequence_counter += 1
 
-            # Wait for all TTS jobs to complete
-            await tts_queue.join()
-            await tts_queue.put(None)
-            await tts_worker_task
+            if not self._is_interrupted and gen_id == self.generation_id:
+                # Wait for all TTS jobs to complete
+                await tts_queue.join()
+                await tts_queue.put(None)
+                await tts_worker_task
 
-            # Wait for audio dispatcher to flush
-            await tts_results.put(None)
-            await audio_dispatcher_task
+                # Wait for audio dispatcher to flush
+                await tts_results.put(None)
+                await audio_dispatcher_task
 
-            total_turn_ms = (time.perf_counter() - t0_turn) * 1000
-            await self._emit_telemetry({
-                "type": "llm_done",
-                "full_text": full_llm_text,
-                "total_turn_ms": round(total_turn_ms, 1),
-            })
+                total_turn_ms = (time.perf_counter() - t0_turn) * 1000
+                await self._emit_telemetry({
+                    "type": "llm_done",
+                    "full_text": full_llm_text,
+                    "total_turn_ms": round(total_turn_ms, 1),
+                    "generation_id": gen_id,
+                })
 
         finally:
             if not tts_worker_task.done():

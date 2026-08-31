@@ -373,7 +373,15 @@ class WebRTCVoiceClient:
                 self.is_streaming_response = False
             console.print(f"[dim magenta]🔊 TTS Synthesized [{engine}]: {tts_lat:.1f}ms[/dim magenta]\n")
 
-        # 8. Server Error
+        # 8. User Interruption / Barge-in
+        elif msg_type == "interrupt":
+            if self.speaker_player:
+                self.speaker_player.flush()
+            if self.is_streaming_response:
+                console.print("\n[bold yellow]⚡ [Interrupted by user speech][/bold yellow]")
+                self.is_streaming_response = False
+
+        # 9. Server Error
         elif msg_type == "error":
             err_msg = data.get("message", "Unknown server error")
             console.print(f"[bold red]❌ Server Error: {err_msg}[/bold red]")

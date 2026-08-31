@@ -154,11 +154,13 @@ class MultiEngineTTSManager:
         if not clean:
             return b"", np.zeros(0, dtype=np.int16), 0.0, "none"
 
-        # Detect script: count Devanagari vs Latin characters
+        # Determine language & voice:
+        lang_lower = (language or "").lower().strip()
         num_devanagari = len(re.findall(r"[\u0900-\u097F]", clean))
         num_latin = len(re.findall(r"[a-zA-Z]", clean))
 
-        if num_devanagari > num_latin:
+        is_hindi_req = ("hi" in lang_lower or "hindi" in lang_lower)
+        if is_hindi_req or num_devanagari > 0:
             lang_code = "h"
             voice = self.cfg.kokoro_voice_hi
         else:

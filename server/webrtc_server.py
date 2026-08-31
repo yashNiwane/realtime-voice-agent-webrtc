@@ -32,6 +32,7 @@ from aiortc import (
     RTCSessionDescription,
     RTCDataChannel,
 )
+from aiortc.mediastreams import MediaStreamError
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -395,10 +396,13 @@ async def handle_incoming_audio(
                         run_voice_pipeline(utterance_pcm, session)
                     )
 
-    except asyncio.CancelledError:
-        logger.debug("Incoming audio track loop cancelled.")
+    except (asyncio.CancelledError, MediaStreamError):
+        logger.info("Incoming WebRTC audio track closed cleanly.")
     except Exception as e:
-        logger.exception(f"Exception in incoming audio handler: {e}")
+        if "MediaStreamError" in type(e).__name__:
+            logger.info("Incoming WebRTC audio track closed cleanly.")
+        else:
+            logger.exception(f"Exception in incoming audio handler: {e}")
 
 
 @app.post("/offer")
